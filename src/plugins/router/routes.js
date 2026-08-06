@@ -96,6 +96,11 @@ export const routes = [
   path: 'users',
   component: () => import('@/pages/UsersList.vue'),
 },
+
+{
+  path: 'equipements',
+  component: () => import('@/pages/EquipementsList.vue'),
+},
     ],
   },
   {

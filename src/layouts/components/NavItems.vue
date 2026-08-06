@@ -89,6 +89,14 @@ import VerticalNavLink from '@layouts/components/VerticalNavLink.vue'
   />
 
   <VerticalNavLink
+  :item="{
+    title: 'Équipements',
+    icon: 'bx-car',
+    to: '/equipements',
+  }"
+/>
+
+  <VerticalNavLink
     :item="{
       title: 'Unités',
       icon: 'bx-building',
