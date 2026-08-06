@@ -1,51 +1,5 @@
 <template>
-  <a
-    color="error"
-    class="buy-now-button"
-    href="https://themeselection.com/item/sneat-vuetify-vuejs-admin-template/"
-    target="_blank"
-    rel="noopener noreferrer"
-  >
-    Upgrade to Pro
 
-    <span class="button-inner" />
-
-    <VMenu
-      open-on-hover
-      activator="parent"
-      offset="15"
-      max-width="400px"
-      :close-on-content-click="false"
-      transition="slide-y-reverse-transition"
-    >
-      <VCard>
-        <VImg src="https://cdn.themeselection.com/ts-assets/sneat/sneat-vuetify-vuejs-admin-template-free/banner/banner.png" />
-        <VCardTitle>Sneat - Vuetify Admin Template</VCardTitle>
-        <VCardText>
-          Sneat Admin is the most developer friendly & highly customisable Admin Dashboard Template based on Vuetify.
-        </VCardText>
-        <VCardText>Click on below button to explore PRO version.</VCardText>
-        <VCardText>
-          <VBtn
-            class="me-4"
-            href="https://themeselection.com/item/sneat-vuetify-vuejs-admin-template/?tab=details#details"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Demo
-          </VBtn>
-          <VBtn
-            variant="outlined"
-            href="https://themeselection.com/item/sneat-vuetify-vuejs-admin-template/"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Download
-          </VBtn>
-        </VCardText>
-      </VCard>
-    </VMenu>
-  </a>
 </template>
 
 <style lang="scss" scoped>

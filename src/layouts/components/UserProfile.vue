@@ -1,5 +1,15 @@
 <script setup>
 import avatar1 from '@images/avatars/avatar-1.png'
+import { useAuthStore } from '@/stores/auth'
+import { useRouter } from 'vue-router'
+
+const authStore = useAuthStore()
+const router = useRouter()
+
+const handleLogout = () => {
+  authStore.logout()
+  router.push('/login')
+}
 </script>
 
 <template>
@@ -80,43 +90,14 @@ import avatar1 from '@images/avatars/avatar-1.png'
             <VListItemTitle>Settings</VListItemTitle>
           </VListItem>
 
-          <!-- 👉 Pricing -->
-          <VListItem link>
-            <template #prepend>
-              <VIcon
-                class="me-2"
-                icon="bx-dollar"
-                size="22"
-              />
-            </template>
-
-            <VListItemTitle>Pricing</VListItemTitle>
-          </VListItem>
-
-          <!-- 👉 FAQ -->
-          <VListItem link>
-            <template #prepend>
-              <VIcon
-                class="me-2"
-                icon="bx-help-circle"
-                size="22"
-              />
-            </template>
-
-            <VListItemTitle>FAQ</VListItemTitle>
-          </VListItem>
-
+       
           <!-- Divider -->
           <VDivider class="my-2" />
 
           <!-- 👉 Logout -->
-          <VListItem to="/login">
+         <VListItem @click="handleLogout">
             <template #prepend>
-              <VIcon
-                class="me-2"
-                icon="bx-log-out"
-                size="22"
-              />
+              <VIcon class="me-2" icon="bx-log-out" size="22" />
             </template>
 
             <VListItemTitle>Logout</VListItemTitle>

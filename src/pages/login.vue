@@ -1,8 +1,12 @@
 <script setup>
 import AuthProvider from '@/views/pages/authentication/AuthProvider.vue'
+import { useAuthStore } from '@/stores/auth'
 import logo from '@images/logo.svg?raw'
 import authV1BottomShape from '@images/svg/auth-v1-bottom-shape.svg?url'
 import authV1TopShape from '@images/svg/auth-v1-top-shape.svg?url'
+
+const router = useRouter()
+const authStore = useAuthStore()
 
 const form = ref({
   email: '',
@@ -11,24 +15,41 @@ const form = ref({
 })
 
 const isPasswordVisible = ref(false)
+const errorMessage = ref('')
+const isLoading = ref(false)
+
+const handleLogin = async () => {
+  errorMessage.value = ''
+  isLoading.value = true
+
+  try {
+    await authStore.login(form.value.email, form.value.password)
+    router.push('/')
+  }
+  catch (error) {
+    if (error.response?.status === 401)
+      errorMessage.value = 'Email ou mot de passe incorrect.'
+    else
+      errorMessage.value = 'Une erreur est survenue. Veuillez réessayer.'
+  }
+  finally {
+    isLoading.value = false
+  }
+}
 </script>
 
 <template>
   <div class="auth-wrapper d-flex align-center justify-center pa-4">
     <div class="position-relative my-sm-16">
-      <!-- 👉 Top shape -->
       <VImg
         :src="authV1TopShape"
         class="text-primary auth-v1-top-shape d-none d-sm-block"
       />
-
-      <!-- 👉 Bottom shape -->
       <VImg
         :src="authV1BottomShape"
         class="text-primary auth-v1-bottom-shape d-none d-sm-block"
       />
 
-      <!-- 👉 Auth Card -->
       <VCard
         class="auth-card"
         max-width="460"
@@ -39,7 +60,6 @@ const isPasswordVisible = ref(false)
             to="/"
             class="app-logo"
           >
-            <!-- eslint-disable vue/no-v-html -->
             <div
               class="d-flex"
               v-html="logo"
@@ -60,20 +80,29 @@ const isPasswordVisible = ref(false)
         </VCardText>
 
         <VCardText>
-          <VForm @submit.prevent="$router.push('/')">
+          <VAlert
+            v-if="errorMessage"
+            type="error"
+            variant="tonal"
+            class="mb-4"
+            closable
+            @click:close="errorMessage = ''"
+          >
+            {{ errorMessage }}
+          </VAlert>
+
+          <VForm @submit.prevent="handleLogin">
             <VRow>
-              <!-- email -->
               <VCol cols="12">
                 <VTextField
                   v-model="form.email"
                   autofocus
-                  label="Email or Username"
+                  label="Email"
                   type="email"
                   placeholder="johndoe@email.com"
                 />
               </VCol>
 
-              <!-- password -->
               <VCol cols="12">
                 <VTextField
                   v-model="form.password"
@@ -85,31 +114,30 @@ const isPasswordVisible = ref(false)
                   @click:append-inner="isPasswordVisible = !isPasswordVisible"
                 />
 
-                <!-- remember me checkbox -->
                 <div class="d-flex align-center justify-space-between flex-wrap my-6">
                   <VCheckbox
                     v-model="form.remember"
                     label="Remember me"
                   />
 
-                  <a
+                  <RouterLink
                     class="text-primary"
-                    href="javascript:void(0)"
+                    to="/forgot-password"
                   >
                     Forgot Password?
-                  </a>
+                  </RouterLink>
                 </div>
 
-                <!-- login button -->
                 <VBtn
                   block
                   type="submit"
+                  :loading="isLoading"
+                  :disabled="isLoading"
                 >
                   Login
                 </VBtn>
               </VCol>
 
-              <!-- create account -->
               <VCol
                 cols="12"
                 class="text-body-1 text-center"
@@ -134,7 +162,6 @@ const isPasswordVisible = ref(false)
                 <VDivider />
               </VCol>
 
-              <!-- auth providers -->
               <VCol
                 cols="12"
                 class="text-center"
