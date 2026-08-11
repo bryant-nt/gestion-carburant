@@ -101,6 +101,22 @@ export const routes = [
   path: 'equipements',
   component: () => import('@/pages/EquipementsList.vue'),
 },
+
+{
+  path: 'affectations',
+  component: () => import('@/pages/AffectationsList.vue'),
+},
+
+{
+  path: 'demandes-carburant',
+  component: () => import('@/pages/DemandesCarburant.vue'),
+},
+
+{
+  path: 'approvisionnements',
+  component: () => import('@/pages/ApprovisionnementList.vue'),
+
+},
     ],
   },
   {
