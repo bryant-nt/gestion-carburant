@@ -4,78 +4,52 @@ import statsVerticalChart from '@images/cards/chart-success.png'
 import statsVerticalPaypal from '@images/cards/paypal-error.png'
 import statsVerticalWallet from '@images/cards/wallet-primary.png'
 import { hexToRgb } from '@layouts/utils'
+import { useChefCharroiStore } from '@/stores/chefCharroi'
 
 const vuetifyTheme = useTheme()
+const store = useChefCharroiStore()
 
-const series = {
-  income: [{
-    data: [
-      24,
-      21,
-      30,
-      22,
-      42,
-      26,
-      35,
-      29,
-    ],
-  }],
-  expenses: [{
-    data: [
-      24,
-      21,
-      30,
-      25,
-      42,
-      26,
-      35,
-      29,
-    ],
-  }],
-  profit: [{
-    data: [
-      24,
-      21,
-      30,
-      22,
-      42,
-      26,
-      35,
-      35,
-    ],
-  }],
-}
+const consommationParMois = computed(() => store.consommationParMois)
+const consommationMensuelle = computed(() => store.consommationMensuelle)
+const consommationAnnuelle = computed(() => store.consommationAnnuelle)
+const demandesEnAttente = computed(() => store.demandesEnAttente)
 
-const currentTab = ref('income')
+const currentTab = ref('mensuel')
+
+// La seule série mensuelle réelle disponible (consommationParMois) sert de fond
+// de courbe pour les onglets "mensuel" et "annuel" ; l'onglet "demandes" n'a pas
+// d'historique temporel dans l'API, donc pas de graphique fabriqué pour lui.
+const series = computed(() => ({
+  mensuel: [{ data: consommationParMois.value.map(m => m.litres || 0) }],
+  annuel: [{ data: consommationParMois.value.map(m => m.litres || 0) }],
+}))
 
 const tabData = computed(() => {
   const data = {
-    income: {
+    mensuel: {
       avatar: statsVerticalWallet,
-      title: 'Total Income',
-      stats: '$459.1k',
-      profitLoss: 65,
-      profitLossAmount: '6.5',
-      compareToLastWeek: '$39k',
+      title: 'Consommation du mois',
+      stats: `${consommationMensuelle.value?.litres?.toLocaleString('fr-FR') || 0} L`,
+      profitLoss: consommationMensuelle.value?.variationPourcent ?? 0,
+      hasChart: true,
     },
-    expenses: {
-      avatar: statsVerticalPaypal,
-      title: 'Total Expenses',
-      stats: '$316.5k',
-      profitLoss: 27.8,
-      profitLossAmount: '7.2',
-      compareToLastWeek: '$16k',
-    },
-    profit: {
+    annuel: {
       avatar: statsVerticalChart,
-      title: 'Total Profit',
-      stats: '$147.9k',
-      profitLoss: 35.1,
-      profitLossAmount: '4.5',
-      compareToLastWeek: '$28k',
+      title: 'Consommation annuelle',
+      stats: `${consommationAnnuelle.value?.litres?.toLocaleString('fr-FR') || 0} L`,
+      profitLoss: consommationAnnuelle.value?.variationPourcent ?? 0,
+      hasChart: true,
+    },
+    demandes: {
+      avatar: statsVerticalPaypal,
+      title: 'Demandes en attente',
+      stats: `${demandesEnAttente.value?.count ?? 0}`,
+      profitLoss: null,
+      hasChart: false,
+      extra: demandesEnAttente.value ? `Délai moyen : ${demandesEnAttente.value.delaiMoyenJours?.toFixed(1)} j` : '',
     },
   }
-  
+
   return data[currentTab.value]
 })
 
@@ -84,7 +58,9 @@ const chartConfig = computed(() => {
   const variableTheme = vuetifyTheme.current.value.variables
   const disabledTextColor = `rgba(${ hexToRgb(String(currentTheme['on-surface'])) },${ variableTheme['disabled-opacity'] })`
   const borderColor = `rgba(${ hexToRgb(String(variableTheme['border-color'])) },${ variableTheme['border-opacity'] })`
-  
+
+  const currentSeries = series.value[currentTab.value] || [{ data: [] }]
+
   return {
     chart: {
       parentHeightOffset: 0,
@@ -110,23 +86,11 @@ const chartConfig = computed(() => {
       gradient: {
         opacityTo: 0.25,
         opacityFrom: 0.5,
-        stops: [
-          0,
-          95,
-          100,
-        ],
+        stops: [0, 95, 100],
         shadeIntensity: 0.6,
         colorStops: [[
-          {
-            offset: 0,
-            opacity: 0.4,
-            color: currentTheme.primary,
-          },
-          {
-            offset: 100,
-            opacity: 0.2,
-            color: currentTheme.surface,
-          },
+          { offset: 0, opacity: 0.4, color: currentTheme.primary },
+          { offset: 100, opacity: 0.2, color: currentTheme.surface },
         ]],
       },
     },
@@ -141,16 +105,7 @@ const chartConfig = computed(() => {
     xaxis: {
       axisTicks: { show: false },
       axisBorder: { show: false },
-      categories: [
-        '',
-        'Jan',
-        'Feb',
-        'Mar',
-        'Apr',
-        'May',
-        'Jun',
-        'Jul',
-      ],
+      categories: consommationParMois.value.map(m => m.libelle),
       offsetY: 20,
       offsetX: -24,
       labels: {
@@ -161,12 +116,7 @@ const chartConfig = computed(() => {
         },
       },
     },
-    yaxis: {
-      min: 10,
-      max: 50,
-      show: false,
-      tickAmount: 4,
-    },
+    yaxis: { show: false },
     markers: {
       size: 8,
       strokeWidth: 6,
@@ -180,7 +130,7 @@ const chartConfig = computed(() => {
         seriesIndex: 0,
         fillColor: '#fff',
         strokeColor: currentTheme.primary,
-        dataPointIndex: series[currentTab.value][0].data.length - 1,
+        dataPointIndex: Math.max(0, currentSeries[0].data.length - 1),
       }],
     },
   }
@@ -194,14 +144,14 @@ const chartConfig = computed(() => {
         v-model="currentTab"
         class="v-tabs-pill"
       >
-        <VTab value="income">
-          Income
+        <VTab value="mensuel">
+          Mensuel
         </VTab>
-        <VTab value="expenses">
-          Expenses
+        <VTab value="annuel">
+          Annuel
         </VTab>
-        <VTab value="profit">
-          Profit
+        <VTab value="demandes">
+          Demandes
         </VTab>
       </VTabs>
     </VCardText>
@@ -222,20 +172,24 @@ const chartConfig = computed(() => {
             {{ tabData.stats }}
           </h6>
           <span
+            v-if="tabData.profitLoss !== null"
             class="text-sm"
-            :class="tabData.profitLoss > 0 ? 'text-success' : 'text-error'"
+            :class="tabData.profitLoss >= 0 ? 'text-success' : 'text-error'"
           >
             <VIcon
               size="24"
-              icon="bx-chevron-up"
+              :icon="tabData.profitLoss >= 0 ? 'bx-chevron-up' : 'bx-chevron-down'"
             />
-            {{ tabData.profitLoss }}%
+            {{ tabData.profitLoss >= 0 ? '' : '' }}{{ Math.abs(tabData.profitLoss).toFixed(1) }}%
           </span>
         </div>
+        <p v-if="tabData.extra" class="text-caption text-medium-emphasis mb-0">
+          {{ tabData.extra }}
+        </p>
       </div>
     </VCardText>
 
-    <VCardText>
+    <VCardText v-if="tabData.hasChart">
       <VueApexCharts
         type="area"
         :height="230"
@@ -244,20 +198,10 @@ const chartConfig = computed(() => {
       />
     </VCardText>
 
-    <VCardText class="d-flex align-center justify-center pt-2 gap-4">
-      <VProgressCircular
-        size="45"
-        color="primary"
-        :model-value="tabData.profitLoss"
-      >
-        <span class="text-overline text-medium-emphasis">${{ tabData.profitLossAmount }}</span>
-      </VProgressCircular>
-
-      <div>
-        <h6 class="text-base font-weight-regular">
-          <span class="text-capitalize d-inline-block">{{ currentTab }} this week</span>
-        </h6>
-        <span class="text-sm d-inline-block">{{ tabData.compareToLastWeek }} less than last week</span>
+    <VCardText v-else class="d-flex align-center justify-center" style="min-height: 230px;">
+      <div class="text-center text-medium-emphasis">
+        <VIcon icon="bx-time-five" size="40" class="mb-2" />
+        <div>Pas d'historique temporel disponible pour les demandes</div>
       </div>
     </VCardText>
   </VCard>

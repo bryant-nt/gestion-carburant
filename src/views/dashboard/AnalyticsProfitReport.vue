@@ -4,24 +4,26 @@ import {
   useTheme,
 } from 'vuetify'
 import { hexToRgb } from '@core/utils/colorConverter'
+import { useChefCharroiStore } from '@/stores/chefCharroi'
 
 const vuetifyTheme = useTheme()
 const display = useDisplay()
+const store = useChefCharroiStore()
 
-const series = [{
-  data: [
-    30,
-    58,
-    35,
-    53,
-    50,
-    68,
-  ],
-}]
+const consommationParMois = computed(() => store.consommationParMois)
+const consommationMensuelle = computed(() => store.consommationMensuelle)
+
+const series = computed(() => [{
+  data: consommationParMois.value.map(m => m.litres || 0),
+}])
+
+const variation = computed(() => consommationMensuelle.value?.variationPourcent ?? 0)
+const isPositive = computed(() => variation.value >= 0)
 
 const chartOptions = computed(() => {
   const currentTheme = vuetifyTheme.current.value.colors
-  
+  const color = isPositive.value ? currentTheme.warning : currentTheme.warning
+
   return {
     chart: {
       parentHeightOffset: 0,
@@ -32,11 +34,14 @@ const chartOptions = computed(() => {
         left: 0,
         enabled: true,
         opacity: 0.12,
-        color: currentTheme.warning,
+        color,
       },
     },
-    tooltip: { enabled: false },
-    colors: [`rgba(${ hexToRgb(String(currentTheme.warning)) }, 1)`],
+    tooltip: {
+      enabled: true,
+      y: { formatter: val => `${val} L` },
+    },
+    colors: [`rgba(${ hexToRgb(String(color)) }, 1)`],
     stroke: {
       width: 4,
       curve: 'smooth',
@@ -59,21 +64,11 @@ const chartOptions = computed(() => {
     responsive: [
       {
         breakpoint: display.thresholds.value.lg,
-        options: {
-          chart: {
-            height: 151,
-            width: '100%',
-          },
-        },
+        options: { chart: { height: 151, width: '100%' } },
       },
       {
         breakpoint: display.thresholds.value.md,
-        options: {
-          chart: {
-            height: 131,
-            width: '100%',
-          },
-        },
+        options: { chart: { height: 131, width: '100%' } },
       },
     ],
   }
@@ -86,27 +81,30 @@ const chartOptions = computed(() => {
       <div class="d-flex flex-column justify-space-between gap-y-4">
         <div>
           <h5 class="text-h5 mb-1">
-            Profile Report
+            Tendance consommation
           </h5>
           <VChip
             color="warning"
             size="small"
           >
-            Year 2022
+            Année {{ new Date().getFullYear() }}
           </VChip>
         </div>
 
         <div>
-          <div class="d-flex gap-1 align-center text-success">
+          <div
+            class="d-flex gap-1 align-center"
+            :class="isPositive ? 'text-error' : 'text-success'"
+          >
             <VIcon
-              icon="bx-up-arrow-alt"
+              :icon="isPositive ? 'bx-up-arrow-alt' : 'bx-down-arrow-alt'"
               size="20"
             />
-            <span class="text-base d-inline-block">68.2%</span>
+            <span class="text-base d-inline-block">{{ isPositive ? '+' : '' }}{{ variation.toFixed(1) }}%</span>
           </div>
 
           <h4 class="text-h4">
-            $84,686k
+            {{ consommationMensuelle?.litres?.toLocaleString('fr-FR') || 0 }} L
           </h4>
         </div>
       </div>

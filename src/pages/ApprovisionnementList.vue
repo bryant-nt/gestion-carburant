@@ -17,6 +17,22 @@ const getPhotoUrl = (path) => {
   return `${API_URL}/${path}`
 }
 
+// Le backend renvoie dateEnregistrement en tableau [annee, mois, jour, heure, minute, seconde]
+const parseBackendDate = (value) => {
+  if (!value) return null
+  if (Array.isArray(value)) {
+    const [year, month, day, hour = 0, minute = 0, second = 0] = value
+    return new Date(year, month - 1, day, hour, minute, second)
+  }
+  return new Date(value)
+}
+
+const formatDate = (value, withTime = false) => {
+  const date = parseBackendDate(value)
+  if (!date || isNaN(date.getTime())) return '-'
+  return withTime ? date.toLocaleString('fr-FR') : date.toLocaleDateString('fr-FR')
+}
+
 // Stores
 const approvisionnementStore = useApprovisionnementStore()
 const demandeStore = useDemandeCarburantStore()
@@ -60,14 +76,28 @@ const currentPage = ref(1)
 const itemsPerPage = ref(10)
 const dateFrom = ref(null)
 const dateTo = ref(null)
+const activeTab = ref('a-approvisionner')
 
 // Computed
-const approvisionnements = computed(() => approvisionnementStore.approvisionnements)
-const demandes = computed(() => demandeStore.demandesAValider)
+const approvisionnements = computed(() => approvisionnementStore.approvisionnements || [])
+// ✅ CORRIGÉ : les demandes proposées ici doivent être celles déjà approuvées et prêtes
+// à être servies (scope/pour-approvisionnement), pas celles en attente de validation (scope/a-valider).
+// Fallback [] si le store n'a pas encore été mis à jour avec ce champ (évite le crash "Cannot read properties of undefined").
+const demandes = computed(() => demandeStore.demandesPourApprovisionnement || [])
 const stations = computed(() => stationsStore.allStations)
 const loading = computed(() => approvisionnementStore.loading || demandeStore.loading || stationsStore.loading)
 const pagination = computed(() => approvisionnementStore.pagination)
 const isAdmin = computed(() => authStore.isAdmin)
+
+// Ensemble des idDemande déjà servies, déduit des approvisionnements déjà chargés.
+// Sert de garde-fou supplémentaire : normalement le backend exclut déjà ces demandes
+// de "pour-approvisionnement", mais on double-vérifie côté front pour désactiver le bouton
+// en cas de décalage (ex. juste après création, avant rafraîchissement de la liste).
+const idsDemandesServies = computed(() => {
+  return new Set(approvisionnements.value.map(a => a.idDemande))
+})
+
+const estDejaServie = (idDemande) => idsDemandesServies.value.has(idDemande)
 
 // Options
 const demandeOptions = computed(() => {
@@ -88,11 +118,11 @@ const stationOptions = computed(() => {
 const loadData = async () => {
   try {
     await Promise.all([
-      approvisionnementStore.fetchApprovisionnementsPaged({ 
-        page: currentPage.value - 1, 
-        size: itemsPerPage.value 
+      approvisionnementStore.fetchApprovisionnementsPaged({
+        page: currentPage.value - 1,
+        size: itemsPerPage.value
       }),
-      demandeStore.fetchDemandesAValider(),
+      demandeStore.fetchDemandesPourApprovisionnement(),
       stationsStore.fetchStations()
     ])
   } catch (error) {
@@ -177,11 +207,11 @@ const removeScreenshot = () => {
 }
 
 // Dialogues
-const openCreateDialog = () => {
+const openCreateDialog = (demande = null) => {
   formData.value = {
-    idDemande: null,
-    idStation: null,
-    quantiteRecue: null,
+    idDemande: demande?.idDemande || null,
+    idStation: demande?.station?.idStation || null,
+    quantiteRecue: demande?.quantiteDemandee || null,
     montantDepense: null,
     photoTableauDeBordApres: null,
     photoApresFile: null,
@@ -220,11 +250,10 @@ const validateForm = () => {
 // Créer un approvisionnement
 const createApprovisionnement = async () => {
   if (!validateForm()) return
-  
+
   isSubmitting.value = true
-  
+
   try {
-    // Upload photo après plein
     let photoApresPath = null
     if (formData.value.photoApresFile) {
       const formDataPhoto = new FormData()
@@ -232,8 +261,7 @@ const createApprovisionnement = async () => {
       const response = await approvisionnementStore.uploadPhotoApres(formDataPhoto)
       photoApresPath = response?.photoTableauDeBordApres
     }
-    
-    // Upload screenshot
+
     let screenshotPath = null
     if (formData.value.screenshotFile) {
       const formDataScreenshot = new FormData()
@@ -241,28 +269,28 @@ const createApprovisionnement = async () => {
       const response = await approvisionnementStore.uploadScreenshot(formDataScreenshot)
       screenshotPath = response?.screenshot
     }
-    
+
     const data = {
       idDemande: Number(formData.value.idDemande),
       idStation: Number(formData.value.idStation),
-      quantiteRecue: parseFloat(formData.value.quantiteRecue),
+      // ✅ CORRIGÉ : la doc du POST /approvisionnement attend "quantiteApprovisionnee".
+      // Le champ "quantiteRecue" n'existe que dans les réponses GET (DTO différent en lecture).
+      quantiteApprovisionnee: parseFloat(formData.value.quantiteRecue),
       clientOperationId: formData.value.clientOperationId || generateUUID()
     }
-    
+
     if (formData.value.montantDepense) {
       data.montantDepense = parseFloat(formData.value.montantDepense)
     }
-    
+
     if (photoApresPath) {
       data.photoTableauDeBordApres = photoApresPath
     }
-    
+
     if (screenshotPath) {
       data.screenshot = screenshotPath
     }
-    
-    console.log('📤 Données approvisionnement:', JSON.stringify(data, null, 2))
-    
+
     await approvisionnementStore.createApprovisionnement(data)
     showNotification('Approvisionnement enregistré avec succès ! ✅', 'success')
     showCreateDialog.value = false
@@ -318,18 +346,18 @@ onMounted(() => {
   <VRow>
     <VCol cols="12">
       <VCard title="Gestion des approvisionnements">
-        <template #append>
-          <VBtn
-            color="primary"
-            prepend-icon="bx-plus"
-            @click="openCreateDialog"
-          >
-            Enregistrer un approvisionnement
-          </VBtn>
-        </template>
+        <!-- Onglets -->
+        <VTabs v-model="activeTab" color="primary" class="px-4">
+          <VTab value="a-approvisionner">
+            À approvisionner
+          </VTab>
+          <VTab value="historique">
+            Historique
+          </VTab>
+        </VTabs>
 
-        <!-- Filtres -->
-        <VCardText>
+        <!-- Filtres (historique uniquement) -->
+        <VCardText v-if="activeTab === 'historique'">
           <VRow>
             <VCol cols="12" md="4">
               <VTextField
@@ -369,8 +397,58 @@ onMounted(() => {
           </VRow>
         </VCardText>
 
-        <!-- Tableau -->
-        <VTable>
+        <!-- Tableau des demandes à approvisionner -->
+        <VTable v-if="activeTab === 'a-approvisionner'">
+          <thead>
+            <tr>
+              <th class="text-uppercase text-center">N°</th>
+              <th>Demandeur</th>
+              <th>Équipement</th>
+              <th>Station</th>
+              <th class="text-center">Qté demandée</th>
+              <th class="text-center">Date</th>
+              <th class="text-center">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="loading">
+              <td colspan="7" class="text-center pa-4">
+                <VProgressCircular indeterminate color="primary" />
+              </td>
+            </tr>
+            <tr v-else-if="demandes.length === 0">
+              <td colspan="7" class="text-center pa-4 text-medium-emphasis">
+                Aucune demande en attente d'approvisionnement
+              </td>
+            </tr>
+            <tr v-for="(demande, index) in demandes" :key="demande.idDemande || index">
+              <td class="text-center">{{ index + 1 }}</td>
+              <td>{{ demande.utilisateur?.prenomUtilisateur }} {{ demande.utilisateur?.nomUtilisateur }}</td>
+              <td>{{ demande.equipement?.immatriculationEquipement || '-' }}</td>
+              <td>{{ demande.station?.libelleStation || '-' }}</td>
+              <td class="text-center">
+                <VChip size="small" label color="primary">
+                  {{ demande.quantiteDemandee }} L
+                </VChip>
+              </td>
+              <td class="text-center">{{ formatDate(demande.dateEnregistrement) }}</td>
+              <td class="text-center">
+                <VBtn
+                  size="small"
+                  color="primary"
+                  prepend-icon="bx-gas-pump"
+                  :disabled="estDejaServie(demande.idDemande)"
+                  @click="openCreateDialog(demande)"
+                >
+                  {{ estDejaServie(demande.idDemande) ? 'Déjà servie' : 'Approvisionner' }}
+                </VBtn>
+              </td>
+            </tr>
+          </tbody>
+        </VTable>
+
+        <!-- Tableau historique -->
+        <VTable v-else-if="activeTab === 'historique'">
           <thead>
             <tr>
               <th class="text-uppercase text-center">N°</th>
@@ -414,7 +492,7 @@ onMounted(() => {
               <td class="text-center">
                 {{ item.montantDepense ? item.montantDepense + ' F' : '-' }}
               </td>
-              <td class="text-center">{{ item.dateEnregistrement ? new Date(item.dateEnregistrement).toLocaleDateString('fr-FR') : '-' }}</td>
+              <td class="text-center">{{ formatDate(item.dateEnregistrement) }}</td>
               <td class="text-center">
                 <VBtn
                   icon
@@ -431,7 +509,7 @@ onMounted(() => {
         </VTable>
 
         <!-- Pagination -->
-        <div v-if="pagination.totalPages > 1" class="pa-4 d-flex justify-space-between align-center">
+        <div v-if="activeTab === 'historique' && pagination.totalPages > 1" class="pa-4 d-flex justify-space-between align-center">
           <span class="text-caption text-medium-emphasis">
             {{ pagination.total }} élément(s)
           </span>
@@ -452,7 +530,7 @@ onMounted(() => {
           <VCardTitle>Enregistrer un approvisionnement</VCardTitle>
           <VCardSubtitle>Saisissez les informations de l'approvisionnement</VCardSubtitle>
         </VCardItem>
-        <VCardText>
+        <VCardText style="max-height: 65vh; overflow-y: auto;">
           <VForm @submit.prevent="createApprovisionnement">
             <!-- Photo Après -->
             <div class="d-flex align-center mb-4">
@@ -477,6 +555,8 @@ onMounted(() => {
               </div>
             </div>
 
+            <VDivider class="mb-4" />
+
             <!-- Screenshot -->
             <div class="d-flex align-center mb-4">
               <VAvatar size="60" :image="screenshotPreview" color="primary" variant="tonal" class="me-4">
@@ -485,7 +565,7 @@ onMounted(() => {
                 </span>
               </VAvatar>
               <div>
-                <div class="text-caption text-medium-emphasis">Capture / preuve pompe</div>
+                <div class="text-caption text-medium-emphasis">Capture / preuve pompe (screenshot)</div>
                 <div class="d-flex gap-2 mt-1">
                   <VBtn size="small" variant="tonal" color="primary" @click="$refs.screenshotInput.click()">
                     <VIcon icon="bx-upload" size="16" class="me-1" />
@@ -497,8 +577,11 @@ onMounted(() => {
                   </VBtn>
                 </div>
                 <input ref="screenshotInput" id="screenshotInput" type="file" accept="image/*" class="d-none" @change="onScreenshotChange" />
+                <div class="text-caption text-medium-emphasis mt-1">JPG, PNG ou GIF (max 5MB)</div>
               </div>
             </div>
+
+            <VDivider class="mb-4" />
 
             <VSelect
               v-model="formData.idDemande"
@@ -506,10 +589,22 @@ onMounted(() => {
               :items="demandeOptions"
               item-title="title"
               item-value="value"
-              placeholder="Sélectionner une demande validée"
+              placeholder="Sélectionner une demande approuvée"
               :error-messages="formErrors.idDemande"
               :loading="loading"
-            />
+              :disabled="!!formData.idDemande"
+              :hint="formData.idDemande ? 'Pré-remplie depuis la liste' : ''"
+              persistent-hint
+            >
+              <template #no-data>
+                <div class="pa-4 text-center">
+                  <p class="text-warning mb-1">
+                    <VIcon icon="bx-info-circle" size="20" class="me-1" />
+                    Aucune demande prête pour approvisionnement
+                  </p>
+                </div>
+              </template>
+            </VSelect>
 
             <VSelect
               v-model="formData.idStation"
@@ -585,7 +680,7 @@ onMounted(() => {
             </VListItem>
             <VListItem>
               <VListItemTitle>Date</VListItemTitle>
-              <VListItemSubtitle>{{ approvisionnementCourant.dateEnregistrement ? new Date(approvisionnementCourant.dateEnregistrement).toLocaleString('fr-FR') : '-' }}</VListItemSubtitle>
+              <VListItemSubtitle>{{ formatDate(approvisionnementCourant.dateEnregistrement, true) }}</VListItemSubtitle>
             </VListItem>
             <VListItem v-if="approvisionnementCourant.photoTableauDeBordApres">
               <VListItemTitle>Photo après plein</VListItemTitle>

@@ -1,73 +1,22 @@
 <script setup>
-import chartInfo from '@images/cards/chart-info.png'
-import creditCardSuccess from '@images/cards/credit-card-success.png'
-import creditCardWarning from '@images/cards/credit-card-warning.png'
-import paypalError from '@images/cards/paypal-error.png'
-import walletPrimary from '@images/cards/wallet-primary.png'
+import { useChefCharroiStore } from '@/stores/chefCharroi'
 
-const transactions = [
-  {
-    amount: +82.6,
-    paymentMethod: 'PayPal',
-    description: 'Send money',
-    icon: paypalError,
-    color: 'error',
-  },
-  {
-    paymentMethod: 'Wallet',
-    amount: +270.69,
-    description: 'Mac\'D',
-    icon: walletPrimary,
-    color: 'primary',
-  },
-  {
-    amount: +637.91,
-    paymentMethod: 'Transfer',
-    description: 'Refund',
-    icon: chartInfo,
-    color: 'info',
-  },
-  {
-    paymentMethod: 'Credit Card',
-    amount: -838.71,
-    description: 'Ordered Food',
-    icon: creditCardSuccess,
-    color: 'success',
-  },
-  {
-    paymentMethod: 'Wallet',
-    amount: +203.33,
-    description: 'Starbucks',
-    icon: walletPrimary,
-    color: 'primary',
-  },
-  {
-    paymentMethod: 'Mastercard',
-    amount: -92.45,
-    description: 'Ordered Food',
-    icon: creditCardWarning,
-    color: 'warning',
-  },
-]
+const store = useChefCharroiStore()
+const stocksStations = computed(() => store.stocksStations)
+
+const colorByCarburant = {
+  mazouts: 'warning',
+  essence: 'info',
+}
+const getColor = carburant => colorByCarburant[(carburant || '').toLowerCase()] || 'primary'
 
 const moreList = [
-  {
-    title: 'Share',
-    value: 'Share',
-  },
-  {
-    title: 'Refresh',
-    value: 'Refresh',
-  },
-  {
-    title: 'Update',
-    value: 'Update',
-  },
+  { title: 'Actualiser', value: 'Refresh' },
 ]
 </script>
 
 <template>
-  <VCard title="Transactions">
+  <VCard title="Stocks par station">
     <template #append>
       <MoreBtn :menu-list="moreList" />
     </template>
@@ -75,30 +24,31 @@ const moreList = [
     <VCardText>
       <VList class="card-list">
         <VListItem
-          v-for="item in transactions"
-          :key="item.paymentMethod"
+          v-for="item in stocksStations"
+          :key="item.libelle || `${item.idStation}-${item.idCarburant}`"
         >
           <template #prepend>
             <VAvatar
               rounded
               variant="tonal"
-              :color="item.color"
-              :image="item.icon"
+              :color="getColor(item.carburant)"
               size="40"
-            />
+            >
+              <VIcon icon="bx-gas-pump" />
+            </VAvatar>
           </template>
 
           <VListItemSubtitle>
-            {{ item.paymentMethod }}
+            {{ item.station }}
           </VListItemSubtitle>
           <VListItemTitle>
-            {{ item.description }}
+            {{ item.carburant }}
           </VListItemTitle>
 
           <template #append>
             <VListItemAction>
-              <span class="me-2">{{ item.amount > 0 ? `+$${Math.abs(item.amount)}` : `-$${Math.abs(item.amount)}` }}</span>
-              <span class="text-disabled">USD</span>
+              <span class="me-2">{{ item.litres?.toLocaleString('fr-FR') }}</span>
+              <span class="text-disabled">L</span>
             </VListItemAction>
           </template>
         </VListItem>

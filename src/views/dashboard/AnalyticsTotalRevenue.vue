@@ -4,36 +4,23 @@ import {
   useTheme,
 } from 'vuetify'
 import { hexToRgb } from '@core/utils/colorConverter'
+import { useChefCharroiStore } from '@/stores/chefCharroi'
 
 const vuetifyTheme = useTheme()
 const display = useDisplay()
+const store = useChefCharroiStore()
 
-const series = [
+const consommationParMois = computed(() => store.consommationParMois)
+const consommationAnnuelle = computed(() => store.consommationAnnuelle)
+
+const series = computed(() => [
   {
-    name: `${ new Date().getFullYear() - 1 }`,
-    data: [
-      18,
-      10,
-      15,
-      29,
-      18,
-      12,
-      9,
-    ],
+    name: `${new Date().getFullYear()}`,
+    data: consommationParMois.value.map(m => m.litres || 0),
   },
-  {
-    name: `${ new Date().getFullYear() - 2 }`,
-    data: [
-      -13,
-      -18,
-      -9,
-      -14,
-      -8,
-      -17,
-      -15,
-    ],
-  },
-]
+])
+
+const categories = computed(() => consommationParMois.value.map(m => m.libelle))
 
 const chartOptions = computed(() => {
   const currentTheme = vuetifyTheme.current.value.colors
@@ -42,11 +29,14 @@ const chartOptions = computed(() => {
   const primaryTextColor = `rgba(${ hexToRgb(String(currentTheme['on-surface'])) },${ variableTheme['high-emphasis-opacity'] })`
   const secondaryTextColor = `rgba(${ hexToRgb(String(currentTheme['on-surface'])) },${ variableTheme['medium-emphasis-opacity'] })`
   const borderColor = `rgba(${ hexToRgb(String(variableTheme['border-color'])) },${ variableTheme['border-opacity'] })`
-  
+
+  const isPositive = (consommationAnnuelle.value?.variationPourcent ?? 0) >= 0
+  const radialColor = isPositive ? currentTheme.success : currentTheme.error
+
   return {
     bar: {
       chart: {
-        stacked: true,
+        stacked: false,
         parentHeightOffset: 6,
         offsetX: -12,
         toolbar: { show: false },
@@ -57,29 +47,8 @@ const chartOptions = computed(() => {
         lineCap: 'round',
         colors: [currentTheme.surface],
       },
-      colors: [
-        `rgba(${ hexToRgb(String(currentTheme.primary)) }, 1)`,
-        `rgba(${ hexToRgb(String(currentTheme.info)) }, 1)`,
-      ],
-      legend: {
-        offsetX: -22,
-        offsetY: -1,
-        position: 'top',
-        fontSize: '13px',
-        horizontalAlign: 'left',
-        fontFamily: 'Public Sans',
-        labels: { colors: currentTheme.secondary },
-        itemMargin: {
-          vertical: 4,
-          horizontal: 10,
-        },
-        markers: {
-          width: 11,
-          height: 11,
-          radius: 10,
-          offsetX: -2,
-        },
-      },
+      colors: [`rgba(${ hexToRgb(String(currentTheme.primary)) }, 1)`],
+      legend: { show: false },
       states: {
         hover: { filter: { type: 'none' } },
         active: { filter: { type: 'none' } },
@@ -101,15 +70,7 @@ const chartOptions = computed(() => {
         axisTicks: { show: false },
         crosshairs: { opacity: 0 },
         axisBorder: { show: false },
-        categories: [
-          'Jan',
-          'Feb',
-          'Mar',
-          'Apr',
-          'May',
-          'Jun',
-          'Jul',
-        ],
+        categories: categories.value,
         labels: {
           style: {
             fontSize: '13px',
@@ -120,6 +81,7 @@ const chartOptions = computed(() => {
       },
       yaxis: {
         labels: {
+          formatter: val => `${val} L`,
           style: {
             fontSize: '13px',
             colors: disabledTextColor,
@@ -130,88 +92,39 @@ const chartOptions = computed(() => {
       responsive: [
         {
           breakpoint: 1980,
-          options: {
-            plotOptions: {
-              bar: {
-                columnWidth: '32%',
-                borderRadius: 8,
-              },
-            },
-          },
+          options: { plotOptions: { bar: { columnWidth: '32%', borderRadius: 8 } } },
         },
         {
           breakpoint: display.thresholds.value.xl,
-          options: {
-            plotOptions: {
-              bar: {
-                columnWidth: '43%',
-                borderRadius: 8,
-              },
-            },
-          },
+          options: { plotOptions: { bar: { columnWidth: '43%', borderRadius: 8 } } },
         },
         {
           breakpoint: display.thresholds.value.lg,
-          options: {
-            plotOptions: {
-              bar: {
-                columnWidth: '50%',
-                borderRadius: 7,
-              },
-            },
-          },
+          options: { plotOptions: { bar: { columnWidth: '50%', borderRadius: 7 } } },
         },
         {
           breakpoint: display.thresholds.value.md,
-          options: {
-            plotOptions: {
-              bar: {
-                columnWidth: '48%',
-                borderRadius: 8,
-              },
-            },
-          },
+          options: { plotOptions: { bar: { columnWidth: '48%', borderRadius: 8 } } },
         },
         {
           breakpoint: display.thresholds.value.sm,
-          options: {
-            plotOptions: {
-              bar: {
-                columnWidth: '44%',
-                borderRadius: 6,
-              },
-            },
-          },
+          options: { plotOptions: { bar: { columnWidth: '44%', borderRadius: 6 } } },
         },
         {
           breakpoint: 599,
-          options: {
-            plotOptions: {
-              bar: {
-                columnWidth: '44%',
-                borderRadius: 8,
-              },
-            },
-          },
+          options: { plotOptions: { bar: { columnWidth: '44%', borderRadius: 8 } } },
         },
         {
           breakpoint: 420,
-          options: {
-            plotOptions: {
-              bar: {
-                columnWidth: '55%',
-                borderRadius: 6,
-              },
-            },
-          },
+          options: { plotOptions: { bar: { columnWidth: '55%', borderRadius: 6 } } },
         },
       ],
     },
     radial: {
       chart: { sparkline: { enabled: true } },
-      labels: ['Growth'],
+      labels: ['Variation'],
       stroke: { dashArray: 5 },
-      colors: [`rgba(${ hexToRgb(String(currentTheme.primary)) }, 1)`],
+      colors: [`rgba(${ hexToRgb(String(radialColor)) }, 1)`],
       states: {
         hover: { filter: { type: 'none' } },
         active: { filter: { type: 'none' } },
@@ -223,13 +136,9 @@ const chartOptions = computed(() => {
           opacityTo: 0.6,
           opacityFrom: 1,
           shadeIntensity: 0.5,
-          stops: [
-            30,
-            70,
-            100,
-          ],
+          stops: [30, 70, 100],
           inverseColors: false,
-          gradientToColors: [currentTheme.primary],
+          gradientToColors: [radialColor],
         },
       },
       plotOptions: {
@@ -252,60 +161,48 @@ const chartOptions = computed(() => {
               fontSize: '24px',
               color: primaryTextColor,
               fontFamily: 'Public Sans',
+              formatter: () => {
+                const v = consommationAnnuelle.value?.variationPourcent
+                if (v === null || v === undefined) return '-'
+                return `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`
+              },
             },
           },
         },
       },
       responsive: [
-        {
-          breakpoint: 900,
-          options: { chart: { height: 200 } },
-        },
-        {
-          breakpoint: 735,
-          options: { chart: { height: 200 } },
-        },
-        {
-          breakpoint: 660,
-          options: { chart: { height: 200 } },
-        },
-        {
-          breakpoint: 600,
-          options: { chart: { height: 200 } },
-        },
+        { breakpoint: 900, options: { chart: { height: 200 } } },
+        { breakpoint: 735, options: { chart: { height: 200 } } },
+        { breakpoint: 660, options: { chart: { height: 200 } } },
+        { breakpoint: 600, options: { chart: { height: 200 } } },
       ],
-    },
+    }
   }
 })
 
-const balanceData = [
+const radialSeries = computed(() => {
+  const v = consommationAnnuelle.value?.variationPourcent
+  if (v === null || v === undefined) return [0]
+  return [Math.max(0, Math.min(100, Math.abs(v)))]
+})
+
+const balanceData = computed(() => [
   {
-    icon: 'bx-dollar',
-    amount: '$2.54k',
-    year: '2023',
+    icon: 'bx-calendar-check',
+    amount: `${consommationAnnuelle.value?.litres?.toLocaleString('fr-FR') || 0} L`,
+    year: 'Cette année',
     color: 'primary',
   },
   {
-    icon: 'bx-wallet',
-    amount: '$4.21k',
-    year: '2022',
+    icon: 'bx-calendar',
+    amount: `${consommationAnnuelle.value?.litresPeriodePrecedente?.toLocaleString('fr-FR') || 0} L`,
+    year: 'Année précédente',
     color: 'info',
   },
-]
+])
 
 const moreList = [
-  {
-    title: 'Share',
-    value: 'Share',
-  },
-  {
-    title: 'Refresh',
-    value: 'Refresh',
-  },
-  {
-    title: 'Update',
-    value: 'Update',
-  },
+  { title: 'Actualiser', value: 'Refresh' },
 ]
 </script>
 
@@ -319,7 +216,7 @@ const moreList = [
         :class="$vuetify.display.smAndUp ? 'border-e' : 'border-b'"
       >
         <VCardItem class="pb-0">
-          <VCardTitle>Total Revenue</VCardTitle>
+          <VCardTitle>Consommation mensuelle (litres)</VCardTitle>
 
           <template #append>
             <MoreBtn :menu-list="moreList" />
@@ -343,35 +240,20 @@ const moreList = [
         xl="4"
       >
         <VCardText class="text-center pt-10">
-          <VBtn
-            variant="tonal"
-            class="mb-2"
-            append-icon="bx-chevron-down"
-          >
-            2023
-            <VMenu activator="parent">
-              <VList>
-                <VListItem
-                  v-for="(item, index) in ['2023', '2022', '2021']"
-                  :key="index"
-                  :value="item"
-                >
-                  <VListItemTitle>{{ item }}</VListItemTitle>
-                </VListItem>
-              </VList>
-            </VMenu>
-          </VBtn>
+          <VChip variant="tonal" class="mb-2" color="primary">
+            {{ new Date().getFullYear() }}
+          </VChip>
 
           <!-- radial chart -->
           <VueApexCharts
             type="radialBar"
             :height="200"
             :options="chartOptions.radial"
-            :series="[78]"
+            :series="radialSeries"
           />
 
           <h6 class="text-h6 text-medium-emphasis mb-8 mt-1">
-            62% Company Growth
+            Consommation annuelle
           </h6>
           <div class="d-flex align-center justify-center flex-wrap gap-x-6 gap-y-3">
             <div

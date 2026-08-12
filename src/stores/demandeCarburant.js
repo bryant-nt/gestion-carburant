@@ -5,6 +5,7 @@ export const useDemandeCarburantStore = defineStore('demandeCarburant', {
   state: () => ({
     demandes: [],
     demandesAValider: [],
+    demandesPourApprovisionnement: [],
     demandeCourante: null,
     historique: [],
     loading: false,
@@ -20,6 +21,7 @@ export const useDemandeCarburantStore = defineStore('demandeCarburant', {
   getters: {
     allDemandes: (state) => state.demandes,
     getDemandesAValider: (state) => state.demandesAValider,
+    getDemandesPourApprovisionnement: (state) => state.demandesPourApprovisionnement,
     getDemandeCourante: (state) => state.demandeCourante,
     getHistorique: (state) => state.historique,
     isLoading: (state) => state.loading,
@@ -28,7 +30,6 @@ export const useDemandeCarburantStore = defineStore('demandeCarburant', {
   },
 
   actions: {
-    // Uploader la photo
     async uploadPhoto(formData) {
       this.loading = true
       this.error = null
@@ -43,7 +44,6 @@ export const useDemandeCarburantStore = defineStore('demandeCarburant', {
       }
     },
 
-    // Créer une demande
     async createDemande(data) {
       this.loading = true
       this.error = null
@@ -58,7 +58,6 @@ export const useDemandeCarburantStore = defineStore('demandeCarburant', {
       }
     },
 
-    // Charger toutes les demandes
     async fetchDemandes() {
       this.loading = true
       this.error = null
@@ -74,7 +73,6 @@ export const useDemandeCarburantStore = defineStore('demandeCarburant', {
       }
     },
 
-    // Charger les demandes à valider
     async fetchDemandesAValider(params = {}) {
       this.loading = true
       this.error = null
@@ -101,7 +99,27 @@ export const useDemandeCarburantStore = defineStore('demandeCarburant', {
       }
     },
 
-    // Charger une demande par ID
+    // ✅ NOUVEAU : demandes approuvées, prêtes à être servies (pompiste / station)
+    async fetchDemandesPourApprovisionnement(params = {}) {
+      this.loading = true
+      this.error = null
+      try {
+        const response = await demandeCarburantService.getDemandesPourApprovisionnement(params)
+        const data = response.data
+        this.demandesPourApprovisionnement = data.content || data || []
+        return data
+      } catch (error) {
+        if (error.response?.status === 204) {
+          this.demandesPourApprovisionnement = []
+          return []
+        }
+        this.error = error.response?.data?.message || 'Erreur lors du chargement des demandes pour approvisionnement'
+        throw error
+      } finally {
+        this.loading = false
+      }
+    },
+
     async fetchDemandeById(id) {
       this.loading = true
       this.error = null
@@ -117,52 +135,6 @@ export const useDemandeCarburantStore = defineStore('demandeCarburant', {
       }
     },
 
-    // Valider une demande
-    async validerDemande(id, data = {}) {
-      this.loading = true
-      this.error = null
-      try {
-        const response = await demandeCarburantService.validerDemande(id, data)
-        return response.data
-      } catch (error) {
-        this.error = error.response?.data?.message || 'Erreur lors de la validation'
-        throw error
-      } finally {
-        this.loading = false
-      }
-    },
-
-    // Rejeter une demande
-    async rejeterDemande(id, data = {}) {
-      this.loading = true
-      this.error = null
-      try {
-        const response = await demandeCarburantService.rejeterDemande(id, data)
-        return response.data
-      } catch (error) {
-        this.error = error.response?.data?.message || 'Erreur lors du rejet'
-        throw error
-      } finally {
-        this.loading = false
-      }
-    },
-
-    // Annuler une demande
-    async annulerDemande(id) {
-      this.loading = true
-      this.error = null
-      try {
-        const response = await demandeCarburantService.annulerDemande(id)
-        return response.data
-      } catch (error) {
-        this.error = error.response?.data?.message || 'Erreur lors de l\'annulation'
-        throw error
-      } finally {
-        this.loading = false
-      }
-    },
-
-    // Charger l'historique
     async fetchHistorique(params = {}) {
       this.loading = true
       this.error = null
@@ -185,10 +157,10 @@ export const useDemandeCarburantStore = defineStore('demandeCarburant', {
       }
     },
 
-    // Réinitialiser l'état
     resetState() {
       this.demandes = []
       this.demandesAValider = []
+      this.demandesPourApprovisionnement = []
       this.demandeCourante = null
       this.historique = []
       this.error = null

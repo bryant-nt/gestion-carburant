@@ -1,22 +1,33 @@
 <script setup>
 import { useTheme } from 'vuetify'
 import { hexToRgb } from '@core/utils/colorConverter'
+import { useChefCharroiStore } from '@/stores/chefCharroi'
 
 const vuetifyTheme = useTheme()
+const store = useChefCharroiStore()
 
-const series = [
-  45,
-  80,
-  20,
-  40,
-]
+const consommationParTypeEngin = computed(() => store.consommationParTypeEngin)
+const parc = computed(() => store.parc)
+
+const paletteKeys = ['primary', 'success', 'secondary', 'info', 'warning', 'error']
+const iconByType = {
+  voiture: 'bx-car',
+  moto: 'bx-cycling',
+  'groupe electrogène': 'bx-power-off',
+  'groupe électrogène': 'bx-power-off',
+}
+const getIcon = type => iconByType[(type || '').toLowerCase()] || 'bx-category'
+
+const totalLitres = computed(() => consommationParTypeEngin.value.reduce((s, t) => s + (t.litres || 0), 0))
+
+const series = computed(() => consommationParTypeEngin.value.map(t => t.litres || 0))
 
 const chartOptions = computed(() => {
   const currentTheme = vuetifyTheme.current.value.colors
   const variableTheme = vuetifyTheme.current.value.variables
   const secondaryTextColor = `rgba(${ hexToRgb(String(currentTheme['on-surface'])) },${ variableTheme['medium-emphasis-opacity'] })`
   const primaryTextColor = `rgba(${ hexToRgb(String(currentTheme['on-surface'])) },${ variableTheme['high-emphasis-opacity'] })`
-  
+
   return {
     chart: {
       sparkline: { enabled: true },
@@ -27,20 +38,13 @@ const chartOptions = computed(() => {
       colors: [currentTheme.surface],
     },
     legend: { show: false },
-    tooltip: { enabled: false },
+    tooltip: {
+      enabled: true,
+      y: { formatter: val => `${val.toLocaleString('fr-FR')} L` },
+    },
     dataLabels: { enabled: false },
-    labels: [
-      'Fashion',
-      'Electronic',
-      'Sports',
-      'Decor',
-    ],
-    colors: [
-      currentTheme.success,
-      currentTheme.primary,
-      currentTheme.secondary,
-      currentTheme.info,
-    ],
+    labels: consommationParTypeEngin.value.map(t => t.type),
+    colors: consommationParTypeEngin.value.map((_, i) => currentTheme[paletteKeys[i % paletteKeys.length]]),
     grid: {
       padding: {
         top: -7,
@@ -70,13 +74,14 @@ const chartOptions = computed(() => {
               color: primaryTextColor,
               fontFamily: 'Public Sans',
               fontWeight: 500,
+              formatter: val => `${Number(val).toLocaleString('fr-FR')} L`,
             },
             total: {
               show: true,
-              label: 'Weekly',
+              label: 'Total',
               fontSize: '13px',
               lineHeight: '18px',
-              formatter: () => '38%',
+              formatter: () => `${totalLitres.value.toLocaleString('fr-FR')} L`,
               color: secondaryTextColor,
               fontFamily: 'Public Sans',
             },
@@ -87,50 +92,8 @@ const chartOptions = computed(() => {
   }
 })
 
-const orders = [
-  {
-    amount: '82.5k',
-    title: 'Electronic',
-    avatarColor: 'primary',
-    subtitle: 'Mobile, Earbuds, TV',
-    avatarIcon: 'bx-mobile-alt',
-  },
-  {
-    amount: '23.8k',
-    title: 'Fashion',
-    avatarColor: 'success',
-    subtitle: 'Tshirt, Jeans, Shoes',
-    avatarIcon: 'bx-closet',
-  },
-  {
-    amount: 849,
-    title: 'Decor',
-    avatarColor: 'info',
-    subtitle: 'Fine Art, Dining',
-    avatarIcon: 'bx-home',
-  },
-  {
-    amount: 99,
-    title: 'Sports',
-    avatarColor: 'secondary',
-    subtitle: 'Football, Cricket Kit',
-    avatarIcon: 'bx-football',
-  },
-]
-
 const moreList = [
-  {
-    title: 'Share',
-    value: 'Share',
-  },
-  {
-    title: 'Refresh',
-    value: 'Refresh',
-  },
-  {
-    title: 'Update',
-    value: 'Update',
-  },
+  { title: 'Actualiser', value: 'Refresh' },
 ]
 </script>
 
@@ -138,9 +101,9 @@ const moreList = [
   <VCard>
     <VCardItem>
       <VCardTitle>
-        Order Statistics
+        Consommation par type d'engin
       </VCardTitle>
-      <VCardSubtitle>42.82k Total Sales</VCardSubtitle>
+      <VCardSubtitle>{{ totalLitres.toLocaleString('fr-FR') }} L au total cette année</VCardSubtitle>
 
       <template #append>
         <MoreBtn :menu-list="moreList" />
@@ -151,10 +114,10 @@ const moreList = [
       <div class="d-flex align-center justify-space-between mb-6">
         <div class="">
           <h3 class="text-h3 mb-1">
-            8,258
+            {{ parc?.totalEngins ?? '-' }}
           </h3>
           <div class="text-caption text-medium-emphasis">
-            Total Orders
+            Parc total
           </div>
         </div>
 
@@ -171,29 +134,29 @@ const moreList = [
 
       <VList class="card-list">
         <VListItem
-          v-for="order in orders"
-          :key="order.title"
+          v-for="(item, index) in consommationParTypeEngin"
+          :key="item.type"
         >
           <template #prepend>
             <VAvatar
               size="40"
               rounded
               variant="tonal"
-              :color="order.avatarColor"
+              :color="paletteKeys[index % paletteKeys.length]"
             >
-              <VIcon :icon="order.avatarIcon" />
+              <VIcon :icon="getIcon(item.type)" />
             </VAvatar>
           </template>
 
           <VListItemTitle class="font-weight-medium">
-            {{ order.title }}
+            {{ item.type }}
           </VListItemTitle>
           <VListItemSubtitle class="text-body-2">
-            {{ order.subtitle }}
+            {{ totalLitres > 0 ? ((item.litres / totalLitres) * 100).toFixed(0) : 0 }}% du total
           </VListItemSubtitle>
 
           <template #append>
-            <span>{{ order.amount }}</span>
+            <span>{{ item.litres?.toLocaleString('fr-FR') }} L</span>
           </template>
         </VListItem>
       </VList>

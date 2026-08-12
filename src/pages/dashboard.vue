@@ -1,16 +1,29 @@
 <script setup>
+import { onMounted, computed } from 'vue'
 import AnalyticsCongratulations from '@/views/dashboard/AnalyticsCongratulations.vue'
 import AnalyticsFinanceTabs from '@/views/dashboard/AnalyticsFinanceTab.vue'
 import AnalyticsOrderStatistics from '@/views/dashboard/AnalyticsOrderStatistics.vue'
 import AnalyticsProfitReport from '@/views/dashboard/AnalyticsProfitReport.vue'
 import AnalyticsTotalRevenue from '@/views/dashboard/AnalyticsTotalRevenue.vue'
 import AnalyticsTransactions from '@/views/dashboard/AnalyticsTransactions.vue'
+import { useChefCharroiStore } from '@/stores/chefCharroi'
 
-// 👉 Images
+// 👉 Images (réutilisées telles quelles pour les 4 cartes stats, seul le contenu change)
 import chart from '@images/cards/chart-success.png'
 import card from '@images/cards/credit-card-primary.png'
 import paypal from '@images/cards/paypal-error.png'
 import wallet from '@images/cards/wallet-info.png'
+
+const store = useChefCharroiStore()
+
+const consommationMensuelle = computed(() => store.consommationMensuelle)
+const consommationAnnuelle = computed(() => store.consommationAnnuelle)
+const vehiculesEnService = computed(() => store.vehiculesEnService)
+const demandesEnAttente = computed(() => store.demandesEnAttente)
+
+onMounted(() => {
+  store.fetchWebDashboard()
+})
 </script>
 
 <template>
@@ -28,32 +41,32 @@ import wallet from '@images/cards/wallet-info.png'
       sm="4"
     >
       <VRow>
-        <!-- 👉 Profit -->
+        <!-- 👉 Consommation mensuelle -->
         <VCol
           cols="12"
           md="6"
         >
           <CardStatisticsVertical
             v-bind="{
-              title: 'Profit',
+              title: 'Consommation mensuelle',
               image: chart,
-              stats: '$12,628',
-              change: 72.80,
+              stats: `${consommationMensuelle?.litres?.toLocaleString('fr-FR') || 0} L`,
+              change: consommationMensuelle?.variationPourcent ?? 0,
             }"
           />
         </VCol>
 
-        <!-- 👉 Sales -->
+        <!-- 👉 Consommation annuelle -->
         <VCol
           cols="12"
           md="6"
         >
           <CardStatisticsVertical
             v-bind="{
-              title: 'Sales',
+              title: 'Consommation annuelle',
               image: wallet,
-              stats: '$4,679',
-              change: 28.42,
+              stats: `${consommationAnnuelle?.litres?.toLocaleString('fr-FR') || 0} L`,
+              change: consommationAnnuelle?.variationPourcent ?? 0,
             }"
           />
         </VCol>
@@ -78,32 +91,32 @@ import wallet from '@images/cards/wallet-info.png'
       order-md="2"
     >
       <VRow>
-        <!-- 👉 Payments -->
-        <VCol
-          cols="12"
-          sm="6"
-        >
-          <CardStatisticsVertical
-            v-bind=" {
-              title: 'Payments',
-              image: paypal,
-              stats: '$2,468',
-              change: -14.82,
-            }"
-          />
-        </VCol>
-
-        <!-- 👉 Revenue -->
+        <!-- 👉 Véhicules en service -->
         <VCol
           cols="12"
           sm="6"
         >
           <CardStatisticsVertical
             v-bind="{
-              title: 'Transactions',
+              title: 'Véhicules en service',
+              image: paypal,
+              stats: vehiculesEnService ? `${vehiculesEnService.enService}/${vehiculesEnService.total}` : '-',
+              change: vehiculesEnService?.pourcentage ?? 0,
+            }"
+          />
+        </VCol>
+
+        <!-- 👉 Demandes en attente -->
+        <VCol
+          cols="12"
+          sm="6"
+        >
+          <CardStatisticsVertical
+            v-bind="{
+              title: 'Demandes en attente',
               image: card,
-              stats: '$14,857',
-              change: 28.14,
+              stats: `${demandesEnAttente?.count ?? 0}`,
+              change: 0,
             }"
           />
         </VCol>

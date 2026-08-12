@@ -2,9 +2,14 @@
 import { useTheme } from 'vuetify'
 import illustrationJohnDark from '@images/cards/illustration-john-dark.png'
 import illustrationJohnLight from '@images/cards/illustration-john-light.png'
+import { useChefCharroiStore } from '@/stores/chefCharroi'
 
 const { global } = useTheme()
 const illustrationJohn = computed(() => global.name.value === 'dark' ? illustrationJohnDark : illustrationJohnLight)
+
+const store = useChefCharroiStore()
+const consommationMensuelle = computed(() => store.consommationMensuelle)
+const vehiculesEnService = computed(() => store.vehiculesEnService)
 </script>
 
 <template>
@@ -18,22 +23,24 @@ const illustrationJohn = computed(() => global.name.value === 'dark' ? illustrat
       >
         <VCardItem class="pb-3">
           <VCardTitle class="text-primary">
-            Congratulations John! 🎉
+            Accueil 🚛
           </VCardTitle>
         </VCardItem>
 
         <VCardText>
-          You have done 72% more sales today.
+          <template v-if="consommationMensuelle">
+            Consommation du mois : <strong>{{ consommationMensuelle.litres?.toLocaleString('fr-FR') }} L</strong>
+            ({{ consommationMensuelle.variationPourcent >= 0 ? '+' : '' }}{{ consommationMensuelle.variationPourcent?.toFixed(1) }}% vs mois précédent)
+          
+            
+          </template>
+          <template v-else>
+            Chargement des données...
+          </template>
           <br>
-          Check your new raising badge in your profile.
-          <br>
-          <VBtn
-            variant="tonal"
-            class="mt-6"
-            size="small"
-          >
-            View Badges
-          </VBtn>
+          <template v-if="vehiculesEnService">
+            {{ vehiculesEnService.enService }} véhicules en service sur {{ vehiculesEnService.total }} ({{ vehiculesEnService.pourcentage?.toFixed(0) }}%).
+          </template>
         </VCardText>
       </VCol>
 
