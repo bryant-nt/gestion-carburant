@@ -213,13 +213,37 @@ const balanceData = computed(() => [
         xl="8"
         :class="$vuetify.display.smAndUp ? 'border-e' : 'border-b'"
       >
-        <VCardItem class="pb-0">
-          <VCardTitle>Consommation mensuelle (litres)</VCardTitle>
+       <VCardItem class="pb-0 pt-4 px-6">
+  <div class="d-flex align-center justify-space-between w-100">
+    <div class="d-flex align-center">
+      <VIcon
+        icon="mdi-gas-station"
+        color="primary"
+        size="28"
+        class="me-2"
+      />
+      <VCardTitle class="text-h6 font-weight-bold text-primary pa-0">
+        Consommation mensuelle
+        <span class="text-caption text-medium-emphasis font-weight-regular ms-1">
+          (litres)
+        </span>
+      </VCardTitle>
+    </div>
 
-          <template #append>
-            <MoreBtn :menu-list="moreList" />
-          </template>
-        </VCardItem>
+    <div class="d-flex align-center">
+      <VChip
+        color="primary"
+        size="small"
+        variant="tonal"
+        class="me-2"
+      >
+        <VIcon icon="mdi-calendar-month" size="14" class="me-1" />
+        {{ new Date().toLocaleString('fr-FR', { month: 'short', year: 'numeric' }) }}
+      </VChip>
+      <MoreBtn :menu-list="moreList" />
+    </div>
+  </div>
+</VCardItem>
 
         <!-- bar chart -->
         <VCardText class="pb-0">
