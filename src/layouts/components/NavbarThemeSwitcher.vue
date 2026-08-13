@@ -1,13 +1,14 @@
 <script setup>
 const themes = [
+{
+    name: 'dark',
+    icon: 'bx-moon',
+  },
   {
     name: 'light',
     icon: 'bx-sun',
   },
-  {
-    name: 'dark',
-    icon: 'bx-moon',
-  },
+  
 ]
 </script>
 
