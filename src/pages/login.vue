@@ -1,7 +1,6 @@
 <script setup>
 import AuthProvider from '@/views/pages/authentication/AuthProvider.vue'
 import { useAuthStore } from '@/stores/auth'
-import logo from '@images/logo.svg?raw'
 import authV1BottomShape from '@images/svg/auth-v1-bottom-shape.svg?url'
 import authV1TopShape from '@images/svg/auth-v1-top-shape.svg?url'
 
@@ -41,14 +40,7 @@ const handleLogin = async () => {
 <template>
   <div class="auth-wrapper d-flex align-center justify-center pa-4">
     <div class="position-relative my-sm-16">
-      <VImg
-        :src="authV1TopShape"
-        class="text-primary auth-v1-top-shape d-none d-sm-block"
-      />
-      <VImg
-        :src="authV1BottomShape"
-        class="text-primary auth-v1-bottom-shape d-none d-sm-block"
-      />
+      
 
       <VCard
         class="auth-card"
@@ -60,22 +52,24 @@ const handleLogin = async () => {
             to="/"
             class="app-logo"
           >
-            <div
-              class="d-flex"
-              v-html="logo"
+            <VIcon
+              icon="bx-gas-pump"
+              size="36"
+              color="primary"
+              class="me-2"
             />
             <h1 class="app-logo-title">
-              sneat
+              Carburant
             </h1>
           </RouterLink>
         </VCardItem>
 
         <VCardText>
           <h4 class="text-h4 mb-1">
-            Welcome to Sneat! 👋🏻
+            
           </h4>
           <p class="mb-0">
-            Please sign-in to your account and start the adventure
+            
           </p>
         </VCardText>
 
@@ -97,16 +91,16 @@ const handleLogin = async () => {
                 <VTextField
                   v-model="form.email"
                   autofocus
-                  label="Email"
+                  label="Adresse e-mail"
                   type="email"
-                  placeholder="johndoe@email.com"
+                  placeholder="exemple@email.com"
                 />
               </VCol>
 
               <VCol cols="12">
                 <VTextField
                   v-model="form.password"
-                  label="Password"
+                  label="Mot de passe"
                   placeholder="············"
                   :type="isPasswordVisible ? 'text' : 'password'"
                   autocomplete="password"
@@ -117,14 +111,14 @@ const handleLogin = async () => {
                 <div class="d-flex align-center justify-space-between flex-wrap my-6">
                   <VCheckbox
                     v-model="form.remember"
-                    label="Remember me"
+                    label="Se souvenir de moi"
                   />
 
                   <RouterLink
                     class="text-primary"
                     to="/forgot-password"
                   >
-                    Forgot Password?
+                    Mot de passe oublié ?
                   </RouterLink>
                 </div>
 
@@ -134,7 +128,7 @@ const handleLogin = async () => {
                   :loading="isLoading"
                   :disabled="isLoading"
                 >
-                  Login
+                  Se connecter
                 </VBtn>
               </VCol>
 
@@ -143,13 +137,13 @@ const handleLogin = async () => {
                 class="text-body-1 text-center"
               >
                 <span class="d-inline-block">
-                  New on our platform?
+                  Nouveau sur notre plateforme ?
                 </span>
                 <RouterLink
                   class="text-primary ms-1 d-inline-block text-body-1"
                   to="/register"
                 >
-                  Create an account
+                  Créer un compte
                 </RouterLink>
               </VCol>
 
@@ -158,7 +152,7 @@ const handleLogin = async () => {
                 class="d-flex align-center"
               >
                 <VDivider />
-                <span class="mx-4 text-high-emphasis">or</span>
+                <span class="mx-4 text-high-emphasis">ou</span>
                 <VDivider />
               </VCol>
 
