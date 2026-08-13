@@ -92,9 +92,7 @@ const chartOptions = computed(() => {
   }
 })
 
-const moreList = [
-  { title: 'Actualiser', value: 'Refresh' },
-]
+
 </script>
 
 <template>

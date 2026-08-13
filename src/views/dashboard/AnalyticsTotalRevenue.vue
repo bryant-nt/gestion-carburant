@@ -201,9 +201,7 @@ const balanceData = computed(() => [
   },
 ])
 
-const moreList = [
-  { title: 'Actualiser', value: 'Refresh' },
-]
+
 </script>
 
 <template>

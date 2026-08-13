@@ -23,7 +23,7 @@ const vehiculesEnService = computed(() => store.vehiculesEnService)
       >
         <VCardItem class="pb-3">
           <VCardTitle class="text-primary">
-            Accueil 🚛
+            Tableau de bord 🚛
           </VCardTitle>
         </VCardItem>
 
@@ -31,8 +31,6 @@ const vehiculesEnService = computed(() => store.vehiculesEnService)
           <template v-if="consommationMensuelle">
             Consommation du mois : <strong>{{ consommationMensuelle.litres?.toLocaleString('fr-FR') }} L</strong>
             ({{ consommationMensuelle.variationPourcent >= 0 ? '+' : '' }}{{ consommationMensuelle.variationPourcent?.toFixed(1) }}% vs mois précédent)
-          
-            
           </template>
           <template v-else>
             Chargement des données...

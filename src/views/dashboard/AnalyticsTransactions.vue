@@ -10,9 +10,7 @@ const colorByCarburant = {
 }
 const getColor = carburant => colorByCarburant[(carburant || '').toLowerCase()] || 'primary'
 
-const moreList = [
-  { title: 'Actualiser', value: 'Refresh' },
-]
+
 </script>
 
 <template>

@@ -9,10 +9,10 @@ import AnalyticsTransactions from '@/views/dashboard/AnalyticsTransactions.vue'
 import { useChefCharroiStore } from '@/stores/chefCharroi'
 
 // 👉 Images (réutilisées telles quelles pour les 4 cartes stats, seul le contenu change)
-import chart from '@images/cards/chart-success.png'
-import card from '@images/cards/credit-card-primary.png'
-import paypal from '@images/cards/paypal-error.png'
-import wallet from '@images/cards/wallet-info.png'
+import chart from '@images/cards/icon-consommation-mensuelle.png'
+import card from '@images/cards/icon-demandes-attente.png'
+import paypal from '@images/cards/icon-vehicules-service.png'
+import wallet from '@images/cards/icon-consommation-annuelle.png'
 
 const store = useChefCharroiStore()
 
