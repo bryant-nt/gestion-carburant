@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
+import ExcelJS from 'exceljs'
 import { useEquipementsStore } from '@/stores/equipements'
 import { useTypeEquipementStore } from '@/stores/typeEquipement'
 import { useStatutEquipementStore } from '@/stores/statutEquipement'
@@ -29,6 +30,7 @@ const formData = ref({
 })
 const formErrors = ref({})
 const isSubmitting = ref(false)
+const isExporting = ref(false)
 const photoPreview = ref(null)
 
 // État du dialogue de confirmation de suppression
@@ -142,6 +144,174 @@ const showNotification = (message, color = 'success') => {
     message,
     color,
     timeout: 3000
+  }
+}
+
+// -----------------------------------------------------------------------
+// Export Excel (ExcelJS) — même gabarit institutionnel que l'export des
+// demandes de carburant : en-tête ministère, colonnes ajustées, couleurs
+// de statut, bordures, filtre automatique, ligne de total
+// -----------------------------------------------------------------------
+const exportToExcel = async () => {
+  if (isExporting.value) return
+  isExporting.value = true
+
+  try {
+    // On exporte exactement ce que l'utilisateur voit à l'écran (filtres appliqués)
+    const dataSource = filteredEquipements.value || []
+
+    const workbook = new ExcelJS.Workbook()
+    workbook.creator = 'SI GESCAR'
+    workbook.created = new Date()
+
+    const worksheet = workbook.addWorksheet('Parc équipements', {
+      views: [{ state: 'frozen', ySplit: 5, showGridLines: false }],
+      pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 }
+    })
+
+    const NAVY = 'FF0B2545'
+    const AMBER = 'FFE8A33D'
+    const LIGHT = 'FFF4F7FB'
+    const BORDER = 'FFD9E2EC'
+
+    const headers = [
+      'N°', 'Immatriculation', 'Marque', 'Modèle', 'Type', 'Carburant', 'Statut'
+    ]
+
+    worksheet.columns = [
+      { width: 6 }, { width: 20 }, { width: 18 }, { width: 20 },
+      { width: 20 }, { width: 16 }, { width: 16 }
+    ]
+
+    // --- En-tête institutionnel ---
+    worksheet.mergeCells('A1:G1')
+    const titleCell = worksheet.getCell('A1')
+    titleCell.value = "MINISTÈRE DES FINANCES, DU BUDGET ET DE L'ÉCONOMIE NUMÉRIQUE"
+    titleCell.font = { bold: true, size: 13, color: { argb: 'FFFFFFFF' } }
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' }
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }
+    worksheet.getRow(1).height = 30
+
+    worksheet.mergeCells('A2:G2')
+    const subtitleCell = worksheet.getCell('A2')
+    subtitleCell.value = 'SI GESCAR — Parc des équipements'
+    subtitleCell.font = { bold: true, italic: true, size: 11, color: { argb: 'FF1E3A5F' } }
+    subtitleCell.alignment = { horizontal: 'center' }
+    worksheet.getRow(2).height = 20
+
+    worksheet.mergeCells('A3:G3')
+    const dateCell = worksheet.getCell('A3')
+    dateCell.value = `Généré le ${new Date().toLocaleString('fr-FR')} — ${dataSource.length} équipement(s)`
+    dateCell.font = { size: 9, color: { argb: 'FF64748B' } }
+    dateCell.alignment = { horizontal: 'center' }
+    worksheet.getRow(3).height = 16
+
+    worksheet.getRow(4).height = 6 // séparateur
+
+    // --- Ligne d'en-tête des colonnes ---
+    const headerRowIndex = 5
+    const headerRow = worksheet.getRow(headerRowIndex)
+    headerRow.values = headers
+    headerRow.height = 26
+    headerRow.eachCell(cell => {
+      cell.font = { bold: true, size: 10.5, color: { argb: 'FFFFFFFF' } }
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
+      cell.border = {
+        top: { style: 'thin', color: { argb: NAVY } },
+        left: { style: 'thin', color: { argb: NAVY } },
+        bottom: { style: 'medium', color: { argb: AMBER } },
+        right: { style: 'thin', color: { argb: NAVY } }
+      }
+    })
+
+    // --- Lignes de données ---
+    dataSource.forEach((e, i) => {
+      const rowIndex = headerRowIndex + 1 + i
+      const row = worksheet.getRow(rowIndex)
+      row.values = [
+        i + 1,
+        e.immatriculationEquipement || '-',
+        e.marqueEquipement || '-',
+        e.modeleEquipement || '-',
+        e.typeEquipement?.libelleTypeEquipement || '-',
+        e.carburant?.libelleCarburant || '-',
+        e.statut?.libelleStatut || '-'
+      ]
+      row.height = 20
+
+      row.eachCell((cell, colNumber) => {
+        cell.border = {
+          top: { style: 'thin', color: { argb: BORDER } },
+          left: { style: 'thin', color: { argb: BORDER } },
+          bottom: { style: 'thin', color: { argb: BORDER } },
+          right: { style: 'thin', color: { argb: BORDER } }
+        }
+        cell.alignment = {
+          vertical: 'middle',
+          horizontal: (colNumber === 2 || colNumber === 3 || colNumber === 4) ? 'left' : 'center'
+        }
+        cell.font = { size: 10, color: { argb: 'FF1E293B' } }
+      })
+
+      if (i % 2 === 1) {
+        row.eachCell(cell => {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: LIGHT } }
+        })
+      }
+
+      // Immatriculation en gras
+      row.getCell(2).font = { ...row.getCell(2).font, bold: true }
+
+      // Statut colorié (actif/VIP en vert, sinon rouge — cohérent avec l'affichage écran)
+      const statutLibelle = e.statut?.libelleStatut
+      const isActif = statutLibelle === 'Actif' || statutLibelle === 'VIP'
+      row.getCell(7).font = {
+        bold: true,
+        size: 10,
+        color: { argb: isActif ? 'FF16A34A' : 'FFDC2626' }
+      }
+    })
+
+    const lastDataRow = headerRowIndex + dataSource.length
+
+    // --- Filtre automatique sur les colonnes ---
+    if (dataSource.length > 0) {
+      worksheet.autoFilter = {
+        from: { row: headerRowIndex, column: 1 },
+        to: { row: lastDataRow, column: 7 }
+      }
+    }
+
+    // --- Ligne de total ---
+    const totalRowIndex = lastDataRow + 2
+    worksheet.mergeCells(`A${totalRowIndex}:D${totalRowIndex}`)
+    const totalLabelCell = worksheet.getCell(`A${totalRowIndex}`)
+    totalLabelCell.value = `Total des équipements : ${dataSource.length}`
+    totalLabelCell.font = { bold: true, size: 10.5, color: { argb: NAVY } }
+
+    // --- Téléchargement ---
+    const buffer = await workbook.xlsx.writeBuffer()
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    })
+    const fileName = `parc_equipements_${new Date().toISOString().slice(0, 10)}.xlsx`
+
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+
+    showNotification('Export Excel généré avec succès ✅', 'success')
+  } catch (error) {
+    console.error('Erreur export Excel:', error)
+    showNotification("Erreur lors de l'export Excel", 'error')
+  } finally {
+    isExporting.value = false
   }
 }
 
@@ -368,13 +538,25 @@ onMounted(() => {
     <VCol cols="12">
       <VCard title="Gestion du parc d'équipements">
         <template #append>
-          <VBtn
-            color="primary"
-            prepend-icon="bx-plus"
-            @click="openCreateDialog"
-          >
-            Ajouter un équipement
-          </VBtn>
+          <div class="d-flex gap-2">
+            <VBtn
+              color="success"
+              variant="tonal"
+              prepend-icon="bx-file"
+              :loading="isExporting"
+              :disabled="isExporting || filteredEquipements.length === 0"
+              @click="exportToExcel"
+            >
+              Exporter Excel
+            </VBtn>
+            <VBtn
+              color="primary"
+              prepend-icon="bx-plus"
+              @click="openCreateDialog"
+            >
+              Ajouter un équipement
+            </VBtn>
+          </div>
         </template>
 
         <!-- Filtres -->
