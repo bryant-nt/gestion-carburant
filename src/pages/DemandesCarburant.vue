@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
+import ExcelJS from 'exceljs'
 import { useDemandeCarburantStore } from '@/stores/demandeCarburant'
 import { useValidationDemandeStore } from '@/stores/validationDemande'
 import { useEquipementsStore } from '@/stores/equipements'
@@ -48,6 +49,16 @@ const statutColor = (statut) => {
   return 'secondary'
 }
 
+// Couleur ARGB (pour Excel) selon le statut, en cohérence avec statutColor()
+const statutColorExcel = (statut) => {
+  if (!statut) return 'FFB45309'
+  const s = statut.toLowerCase()
+  if (s.includes('rejet')) return 'FFDC2626'
+  if (s.includes('approuv') || s.includes('valid') || s.includes('clôtur') || s.includes('cloture')) return 'FF16A34A'
+  if (s.includes('cours') || s.includes('attente')) return 'FFB45309'
+  return 'FF64748B'
+}
+
 // Stores
 const demandeStore = useDemandeCarburantStore()
 const validationStore = useValidationDemandeStore()
@@ -61,6 +72,7 @@ const showCreateDialog = ref(false)
 const showDetailDialog = ref(false)
 const showValidationDialog = ref(false)
 const isSubmitting = ref(false)
+const isExporting = ref(false)
 const validationAction = ref('') // 'valider' | 'rejeter'
 const validationCommentaire = ref('')
 const validationDemandeIdUnite = ref(null)
@@ -174,6 +186,214 @@ const generateUUID = () => {
     var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8)
     return v.toString(16)
   })
+}
+
+// -----------------------------------------------------------------------
+// Export Excel (ExcelJS) — en-tête institutionnel, colonnes ajustées,
+// couleurs de statut, bordures, filtre automatique, ligne de total
+// -----------------------------------------------------------------------
+const exportToExcel = async () => {
+  if (isExporting.value) return
+  isExporting.value = true
+
+  // On mémorise la page actuellement affichée à l'écran pour la restaurer après l'export,
+  // car on va temporairement écraser l'état du store en récupérant toutes les pages.
+  const savedPage = currentPage.value
+
+  try {
+    // --- Récupération de TOUTES les demandes (pas seulement la page affichée) ---
+    const dataSource = []
+    const exportPageSize = 200
+    let page = 0
+    let totalPages = 1
+
+    do {
+      const params = { page, size: exportPageSize }
+      if (includeAll.value) params.includeAll = true
+      if (searchQuery.value) params.search = searchQuery.value
+
+      await demandeStore.fetchDemandesAValider(params)
+
+      dataSource.push(...(demandeStore.demandesAValider || []))
+      totalPages = demandeStore.pagination?.totalPages || 1
+      page += 1
+    } while (page < totalPages)
+
+    const workbook = new ExcelJS.Workbook()
+    workbook.creator = 'SI GESCAR'
+    workbook.created = new Date()
+
+    const worksheet = workbook.addWorksheet('Demandes carburant', {
+      views: [{ state: 'frozen', ySplit: 5, showGridLines: false }],
+      pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 }
+    })
+
+    const NAVY = 'FF0B2545'
+    const AMBER = 'FFE8A33D'
+    const LIGHT = 'FFF4F7FB'
+    const BORDER = 'FFD9E2EC'
+
+    const headers = [
+      'N°', 'Demandeur', 'Équipement', 'Station', 'Carburant',
+      'Qté demandée (L)', 'Qté accordée (L)', 'Statut', 'Date', 'Commentaire'
+    ]
+
+    worksheet.columns = [
+      { width: 6 }, { width: 26 }, { width: 20 }, { width: 20 }, { width: 14 },
+      { width: 18 }, { width: 18 }, { width: 18 }, { width: 14 }, { width: 34 }
+    ]
+
+    // --- En-tête institutionnel ---
+    worksheet.mergeCells('A1:J1')
+    const titleCell = worksheet.getCell('A1')
+    titleCell.value = "MINISTÈRE DES FINANCES, DU BUDGET ET DE L'ÉCONOMIE NUMÉRIQUE"
+    titleCell.font = { bold: true, size: 13, color: { argb: 'FFFFFFFF' } }
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' }
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }
+    worksheet.getRow(1).height = 30
+
+    worksheet.mergeCells('A2:J2')
+    const subtitleCell = worksheet.getCell('A2')
+    subtitleCell.value = 'SI GESCAR — Rapport des demandes de carburant'
+    subtitleCell.font = { bold: true, italic: true, size: 11, color: { argb: 'FF1E3A5F' } }
+    subtitleCell.alignment = { horizontal: 'center' }
+    worksheet.getRow(2).height = 20
+
+    worksheet.mergeCells('A3:J3')
+    const dateCell = worksheet.getCell('A3')
+    dateCell.value = `Généré le ${new Date().toLocaleString('fr-FR')} — ${dataSource.length} demande(s)`
+    dateCell.font = { size: 9, color: { argb: 'FF64748B' } }
+    dateCell.alignment = { horizontal: 'center' }
+    worksheet.getRow(3).height = 16
+
+    worksheet.getRow(4).height = 6 // séparateur
+
+    // --- Ligne d'en-tête des colonnes ---
+    const headerRowIndex = 5
+    const headerRow = worksheet.getRow(headerRowIndex)
+    headerRow.values = headers
+    headerRow.height = 26
+    headerRow.eachCell(cell => {
+      cell.font = { bold: true, size: 10.5, color: { argb: 'FFFFFFFF' } }
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
+      cell.border = {
+        top: { style: 'thin', color: { argb: NAVY } },
+        left: { style: 'thin', color: { argb: NAVY } },
+        bottom: { style: 'medium', color: { argb: AMBER } },
+        right: { style: 'thin', color: { argb: NAVY } }
+      }
+    })
+
+    // --- Lignes de données ---
+    dataSource.forEach((d, i) => {
+      const etapeValidee = (d.validations || []).find(v => v.quantiteAccordee != null)
+      const rowIndex = headerRowIndex + 1 + i
+
+      const row = worksheet.getRow(rowIndex)
+      row.values = [
+        i + 1,
+        `${d.utilisateur?.prenomUtilisateur || ''} ${d.utilisateur?.nomUtilisateur || ''}`.trim() || '-',
+        d.equipement?.immatriculationEquipement || '-',
+        d.station?.libelleStation || '-',
+        d.equipement?.carburant?.libelleCarburant || '-',
+        d.quantiteDemandee ?? '-',
+        etapeValidee?.quantiteAccordee ?? '-',
+        d.statutDemande || '-',
+        formatDate(d.dateEnregistrement),
+        d.descriptionDemande || d.commentaire || ''
+      ]
+      row.height = 20
+
+      row.eachCell((cell, colNumber) => {
+        cell.border = {
+          top: { style: 'thin', color: { argb: BORDER } },
+          left: { style: 'thin', color: { argb: BORDER } },
+          bottom: { style: 'thin', color: { argb: BORDER } },
+          right: { style: 'thin', color: { argb: BORDER } }
+        }
+        cell.alignment = {
+          vertical: 'middle',
+          horizontal: (colNumber === 2 || colNumber === 10) ? 'left' : 'center',
+          wrapText: colNumber === 10
+        }
+        cell.font = { size: 10, color: { argb: 'FF1E293B' } }
+      })
+
+      if (i % 2 === 1) {
+        row.eachCell(cell => {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: LIGHT } }
+        })
+      }
+
+      // Colonnes quantités en gras
+      row.getCell(6).font = { ...row.getCell(6).font, bold: true }
+      row.getCell(7).font = { ...row.getCell(7).font, bold: true }
+
+      // Statut colorié
+      const statutCell = row.getCell(8)
+      statutCell.font = { bold: true, size: 10, color: { argb: statutColorExcel(d.statutDemande) } }
+    })
+
+    const lastDataRow = headerRowIndex + dataSource.length
+
+    // --- Filtre automatique sur les colonnes ---
+    if (dataSource.length > 0) {
+      worksheet.autoFilter = {
+        from: { row: headerRowIndex, column: 1 },
+        to: { row: lastDataRow, column: 10 }
+      }
+    }
+
+    // --- Ligne de total ---
+    const totalRowIndex = lastDataRow + 2
+    worksheet.mergeCells(`A${totalRowIndex}:D${totalRowIndex}`)
+    const totalLabelCell = worksheet.getCell(`A${totalRowIndex}`)
+    totalLabelCell.value = `Total des demandes : ${dataSource.length}`
+    totalLabelCell.font = { bold: true, size: 10.5, color: { argb: NAVY } }
+
+    const totalQteDemandee = dataSource.reduce((sum, d) => sum + (Number(d.quantiteDemandee) || 0), 0)
+    const totalQteAccordee = dataSource.reduce((sum, d) => {
+      const etape = (d.validations || []).find(v => v.quantiteAccordee != null)
+      return sum + (Number(etape?.quantiteAccordee) || 0)
+    }, 0)
+
+    const totalDemandeeCell = worksheet.getCell(`F${totalRowIndex}`)
+    totalDemandeeCell.value = `${totalQteDemandee.toFixed(1)} L`
+    totalDemandeeCell.font = { bold: true, size: 10.5, color: { argb: NAVY } }
+    totalDemandeeCell.alignment = { horizontal: 'center' }
+
+    const totalAccordeeCell = worksheet.getCell(`G${totalRowIndex}`)
+    totalAccordeeCell.value = `${totalQteAccordee.toFixed(1)} L`
+    totalAccordeeCell.font = { bold: true, size: 10.5, color: { argb: NAVY } }
+    totalAccordeeCell.alignment = { horizontal: 'center' }
+
+    // --- Téléchargement ---
+    const buffer = await workbook.xlsx.writeBuffer()
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    })
+    const fileName = `demandes_carburant_${new Date().toISOString().slice(0, 10)}.xlsx`
+
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+
+    showNotification('Export Excel généré avec succès ✅', 'success')
+  } catch (error) {
+    console.error('Erreur export Excel:', error)
+    showNotification("Erreur lors de l'export Excel", 'error')
+  } finally {
+    // Restaure l'affichage tel qu'il était avant l'export (page + filtres actuels)
+    currentPage.value = savedPage
+    await loadDemandesAValider()
+    isExporting.value = false
+  }
 }
 
 // Upload photo
@@ -392,13 +612,25 @@ onMounted(() => {
     <VCol cols="12">
       <VCard title="Demandes de carburant">
         <template #append>
-          <VBtn
-            color="primary"
-            prepend-icon="bx-plus"
-            @click="openCreateDialog"
-          >
-            Nouvelle demande
-          </VBtn>
+          <div class="d-flex gap-2">
+            <VBtn
+              color="success"
+              variant="tonal"
+              prepend-icon="bx-file"
+              :loading="isExporting"
+              :disabled="isExporting || demandesAValider.length === 0"
+              @click="exportToExcel"
+            >
+              Exporter Excel
+            </VBtn>
+            <VBtn
+              color="primary"
+              prepend-icon="bx-plus"
+              @click="openCreateDialog"
+            >
+              Nouvelle demande
+            </VBtn>
+          </div>
         </template>
 
         <!-- Onglets -->
