@@ -141,7 +141,7 @@ const handleLogin = async () => {
                 </span>
                 <RouterLink
                   class="text-primary ms-1 d-inline-block text-body-1"
-                  to="/register"
+                  to=""
                 >
                   Créer un compte
                 </RouterLink>
