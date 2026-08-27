@@ -7,13 +7,10 @@ import { defineConfig } from 'vite'
 import vuetify from 'vite-plugin-vuetify'
 import svgLoader from 'vite-svg-loader'
 
-// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
     vue(),
     vueJsx(),
-
-    // Docs: https://github.com/vuetifyjs/vuetify-loader/tree/master/packages/vite-plugin
     vuetify({
       styles: {
         configFile: 'src/assets/styles/variables/_vuetify.scss',
@@ -24,19 +21,14 @@ export default defineConfig({
       dts: true,
       resolvers: [
         componentName => {
-          // Auto import `VueApexCharts`
           if (componentName === 'VueApexCharts')
             return { name: 'default', from: 'vue3-apexcharts', as: 'VueApexCharts' }
         },
       ],
     }),
-
-    // Docs: https://github.com/antfu/unplugin-auto-import#unplugin-auto-import
     AutoImport({
       imports: ['vue', 'vue-router', '@vueuse/core', '@vueuse/math', 'pinia'],
       vueTemplate: true,
-
-      // ℹ️ Disabled to avoid confusion & accidental usage
       ignore: ['useCookies', 'useStorage'],
       eslintrc: {
         enabled: true,
@@ -65,4 +57,13 @@ export default defineConfig({
       './src/**/*.vue',
     ],
   },
+  // ✅ Proxy ajouté ici
+  server: {
+    proxy: {
+      '/api/uploads': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      }
+    }
+  }
 })

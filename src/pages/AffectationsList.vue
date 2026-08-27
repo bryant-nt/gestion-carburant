@@ -1,22 +1,58 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
+import { axiosIns } from '@/plugins/axios'
 import { useAffectationsStore } from '@/stores/affectations'
 import { useEquipementsStore } from '@/stores/equipements'
 import { useUsersStore } from '@/stores/users'
 import { useAuthStore } from '@/stores/auth'
 
-// Helper pour les photos
-const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
+// --- Gestion des photos protégées (JWT via Axios) -----------------------
+// Identique aux autres composants.
+const photoUrlCache = reactive(new Map())
 
-const getPhotoUrl = (path) => {
-  if (!path) return null
-  if (path.startsWith('http')) return path
-  const token = localStorage.getItem('accessToken')
-  if (token) {
-    return `${API_URL}/${path}?token=${token}`
+const loadAuthenticatedPhoto = async (id, photoPath) => {
+  if (!photoPath || photoUrlCache.has(id)) return
+
+  try {
+    const cleanPath = photoPath.startsWith('/') ? photoPath : `/${photoPath}`
+    const response = await axiosIns.get(cleanPath, { responseType: 'blob' })
+    const objectUrl = URL.createObjectURL(response.data)
+    photoUrlCache.set(id, objectUrl)
+    console.log('✅ Photo protégée chargée pour ID', id)
+  } catch (error) {
+    console.error('❌ Impossible de charger la photo protégée pour ID', id, error)
+    brokenPhotos.value.add(id)
   }
-  return `${API_URL}/${path}`
 }
+
+const revokeAllPhotoUrls = () => {
+  photoUrlCache.forEach(url => URL.revokeObjectURL(url))
+  photoUrlCache.clear()
+}
+
+const loadPhotosInBatches = async (items, batchSize = 3) => {
+  const tasks = []
+  for (const item of items) {
+    if (item.photoTableauBord) {
+      // Utiliser une clé unique : on préfixe par le type d'entité pour éviter les collisions
+      // Pour les affectations, on a un idEquipementUtilisateur ; pour historique, idHistorique.
+      const id = item.idEquipementUtilisateur || item.idHistorique || `photo-${Math.random()}`
+      tasks.push(loadAuthenticatedPhoto(`affectation-${id}`, item.photoTableauBord))
+    }
+  }
+
+  for (let i = 0; i < tasks.length; i += batchSize) {
+    const batch = tasks.slice(i, i + batchSize)
+    await Promise.all(batch)
+  }
+}
+
+const brokenPhotos = ref(new Set())
+const onPhotoError = (id) => {
+  console.error('❌ Échec d\'affichage de la photo pour ID', id)
+  brokenPhotos.value.add(id)
+}
+// -----------------------------------------------------------------------
 
 // Initialisation des stores
 const affectationsStore = useAffectationsStore()
@@ -129,6 +165,11 @@ const loadData = async () => {
       equipementsStore.fetchEquipements(),
       usersStore.fetchUsers()
     ])
+
+    // Charger les photos pour les listes
+    await loadPhotosInBatches(equipementsAffectes.value, 3)
+    await loadPhotosInBatches(equipementsDisponibles.value, 3)
+    // Pour 'par état', on chargera plus tard via loadEquipementsParEtat
   } catch (error) {
     showNotification('Erreur lors du chargement des données', 'error')
     console.error('Erreur lors du chargement des données:', error)
@@ -145,6 +186,9 @@ const loadHistorique = async () => {
     if (dateTo.value) params.dateTo = dateTo.value
     if (includeAll.value) params.includeAll = true
     await affectationsStore.fetchHistorique(params)
+
+    // Charger les photos de l'historique
+    await loadPhotosInBatches(historique.value, 3)
   } catch (error) {
     showNotification('Erreur lors du chargement de l\'historique', 'error')
   }
@@ -153,6 +197,8 @@ const loadHistorique = async () => {
 const loadEquipementsParEtat = async () => {
   if (filterStatut.value) {
     await affectationsStore.fetchEquipementsParEtat(filterStatut.value)
+    // Charger les photos
+    await loadPhotosInBatches(equipementsParEtat.value, 3)
   }
 }
 
@@ -173,7 +219,6 @@ const onTabChange = (tab) => {
 }
 
 // Le backend renvoie dateEnregistrement sous forme de tableau [annee, mois, jour, heure, minute, seconde]
-// (mois déjà en 1-12, il faut le décrémenter pour le constructeur Date JS)
 const parseBackendDate = (value) => {
   if (!value) return null
   if (Array.isArray(value)) {
@@ -262,6 +307,10 @@ const openHistoriqueDetail = async (id) => {
   try {
     const data = await affectationsStore.fetchHistoriqueDetail(id)
     historiqueDetail.value = data
+    // Charger la photo du détail si présente
+    if (data.photoTableauBord) {
+      await loadAuthenticatedPhoto(`detail-${id}`, data.photoTableauBord)
+    }
     showHistoriqueDetailDialog.value = true
   } catch (error) {
     showNotification('Erreur lors du chargement du détail', 'error')
@@ -298,7 +347,6 @@ const affecterEquipement = async () => {
       photoPath = response?.photoTableauBord
     }
 
-    // Payload confirmé côté backend : utilisateurId (pas idUtilisateur), niveauCarburant en string
     const data = {
       idEquipement: parseInt(affecterForm.value.idEquipement, 10),
       utilisateurId: parseInt(affecterForm.value.utilisateurId, 10),
@@ -424,6 +472,11 @@ const changePage = (newPage) => {
 // Charger les données au montage
 onMounted(() => {
   loadData()
+})
+
+// Libérer la mémoire des Object URLs au démontage
+onUnmounted(() => {
+  revokeAllPhotoUrls()
 })
 </script>
 
@@ -576,11 +629,16 @@ onMounted(() => {
               <td>
                 <VAvatar
                   size="32"
-                  :image="getPhotoUrl(item.photoTableauBord)"
-                  color="primary"
-                  variant="tonal"
+                  :color="(!photoUrlCache.get('affectation-' + item.idEquipementUtilisateur) || brokenPhotos.has('affectation-' + item.idEquipementUtilisateur)) ? 'primary' : undefined"
+                  :variant="(!photoUrlCache.get('affectation-' + item.idEquipementUtilisateur) || brokenPhotos.has('affectation-' + item.idEquipementUtilisateur)) ? 'tonal' : undefined"
                 >
-                  <VIcon v-if="!item.photoTableauBord" icon="bx-image" size="16" />
+                  <VImg
+                    v-if="photoUrlCache.get('affectation-' + item.idEquipementUtilisateur) && !brokenPhotos.has('affectation-' + item.idEquipementUtilisateur)"
+                    :src="photoUrlCache.get('affectation-' + item.idEquipementUtilisateur)"
+                    cover
+                    @error="onPhotoError('affectation-' + item.idEquipementUtilisateur)"
+                  />
+                  <VIcon v-else icon="bx-image" size="16" />
                 </VAvatar>
               </td>
               <td class="font-weight-medium">
@@ -638,11 +696,16 @@ onMounted(() => {
               <td>
                 <VAvatar
                   size="32"
-                  :image="getPhotoUrl(item.photoTableauBord)"
-                  color="primary"
-                  variant="tonal"
+                  :color="(!photoUrlCache.get('affectation-' + item.idEquipementUtilisateur) || brokenPhotos.has('affectation-' + item.idEquipementUtilisateur)) ? 'primary' : undefined"
+                  :variant="(!photoUrlCache.get('affectation-' + item.idEquipementUtilisateur) || brokenPhotos.has('affectation-' + item.idEquipementUtilisateur)) ? 'tonal' : undefined"
                 >
-                  <VIcon v-if="!item.photoTableauBord" icon="bx-image" size="16" />
+                  <VImg
+                    v-if="photoUrlCache.get('affectation-' + item.idEquipementUtilisateur) && !brokenPhotos.has('affectation-' + item.idEquipementUtilisateur)"
+                    :src="photoUrlCache.get('affectation-' + item.idEquipementUtilisateur)"
+                    cover
+                    @error="onPhotoError('affectation-' + item.idEquipementUtilisateur)"
+                  />
+                  <VIcon v-else icon="bx-image" size="16" />
                 </VAvatar>
               </td>
               <td class="font-weight-medium">
@@ -696,11 +759,16 @@ onMounted(() => {
               <td>
                 <VAvatar
                   size="32"
-                  :image="getPhotoUrl(item.photoTableauBord)"
-                  color="primary"
-                  variant="tonal"
+                  :color="(!photoUrlCache.get('affectation-' + item.idEquipementUtilisateur) || brokenPhotos.has('affectation-' + item.idEquipementUtilisateur)) ? 'primary' : undefined"
+                  :variant="(!photoUrlCache.get('affectation-' + item.idEquipementUtilisateur) || brokenPhotos.has('affectation-' + item.idEquipementUtilisateur)) ? 'tonal' : undefined"
                 >
-                  <VIcon v-if="!item.photoTableauBord" icon="bx-image" size="16" />
+                  <VImg
+                    v-if="photoUrlCache.get('affectation-' + item.idEquipementUtilisateur) && !brokenPhotos.has('affectation-' + item.idEquipementUtilisateur)"
+                    :src="photoUrlCache.get('affectation-' + item.idEquipementUtilisateur)"
+                    cover
+                    @error="onPhotoError('affectation-' + item.idEquipementUtilisateur)"
+                  />
+                  <VIcon v-else icon="bx-image" size="16" />
                 </VAvatar>
               </td>
               <td class="font-weight-medium">
@@ -754,11 +822,16 @@ onMounted(() => {
               <td>
                 <VAvatar
                   size="32"
-                  :image="getPhotoUrl(item.photoTableauBord)"
-                  color="primary"
-                  variant="tonal"
+                  :color="(!photoUrlCache.get('affectation-' + item.idHistorique) || brokenPhotos.has('affectation-' + item.idHistorique)) ? 'primary' : undefined"
+                  :variant="(!photoUrlCache.get('affectation-' + item.idHistorique) || brokenPhotos.has('affectation-' + item.idHistorique)) ? 'tonal' : undefined"
                 >
-                  <VIcon v-if="!item.photoTableauBord" icon="bx-image" size="16" />
+                  <VImg
+                    v-if="photoUrlCache.get('affectation-' + item.idHistorique) && !brokenPhotos.has('affectation-' + item.idHistorique)"
+                    :src="photoUrlCache.get('affectation-' + item.idHistorique)"
+                    cover
+                    @error="onPhotoError('affectation-' + item.idHistorique)"
+                  />
+                  <VIcon v-else icon="bx-image" size="16" />
                 </VAvatar>
               </td>
               <td>{{ item.equipement || '-' }}</td>
@@ -861,10 +934,14 @@ onMounted(() => {
 
             <!-- Photo -->
             <div class="d-flex align-center mt-4">
-              <VAvatar size="60" :image="photoPreview" color="primary" variant="tonal" class="me-4">
-                <span v-if="!photoPreview" class="text-h4">
-                  <VIcon icon="bx-image" size="30" />
-                </span>
+              <VAvatar
+                size="60"
+                :color="!photoPreview ? 'primary' : undefined"
+                :variant="!photoPreview ? 'tonal' : undefined"
+                class="me-4"
+              >
+                <VImg v-if="photoPreview" :src="photoPreview" cover />
+                <VIcon v-else icon="bx-image" size="30" />
               </VAvatar>
               <div>
                 <div class="text-caption text-medium-emphasis">Photo tableau de bord</div>
@@ -925,12 +1002,16 @@ onMounted(() => {
               class="mt-4"
             />
 
-            <!-- Photo (ajoutée : absente du dialogue original alors qu'utilisée par retournerParking) -->
+            <!-- Photo -->
             <div class="d-flex align-center mt-4">
-              <VAvatar size="60" :image="parkingPhotoPreview" color="primary" variant="tonal" class="me-4">
-                <span v-if="!parkingPhotoPreview" class="text-h4">
-                  <VIcon icon="bx-image" size="30" />
-                </span>
+              <VAvatar
+                size="60"
+                :color="!parkingPhotoPreview ? 'primary' : undefined"
+                :variant="!parkingPhotoPreview ? 'tonal' : undefined"
+                class="me-4"
+              >
+                <VImg v-if="parkingPhotoPreview" :src="parkingPhotoPreview" cover />
+                <VIcon v-else icon="bx-image" size="30" />
               </VAvatar>
               <div>
                 <div class="text-caption text-medium-emphasis">Photo tableau de bord (optionnel)</div>
@@ -1023,13 +1104,26 @@ onMounted(() => {
             <VListItem v-if="historiqueDetail.photoTableauBord">
               <VListItemTitle>Photo</VListItemTitle>
               <VListItemSubtitle>
-                <VImg
-                  :src="getPhotoUrl(historiqueDetail.photoTableauBord)"
-                  max-width="300"
-                  max-height="200"
-                  cover
-                  class="mt-2"
-                />
+                <div
+                  class="detail-photo"
+                  :style="{
+                    maxWidth: '350px',
+                    maxHeight: '250px',
+                    borderRadius: '8px',
+                    overflow: 'hidden',
+                    border: '2px solid #e0e0e0',
+                    marginTop: '8px'
+                  }"
+                >
+                  <VImg
+                    v-if="photoUrlCache.get('detail-' + historiqueDetail.idHistorique)"
+                    :src="photoUrlCache.get('detail-' + historiqueDetail.idHistorique)"
+                    cover
+                    width="100%"
+                    height="100%"
+                  />
+                  <VProgressCircular v-else indeterminate color="primary" size="24" class="mt-2" />
+                </div>
               </VListItemSubtitle>
             </VListItem>
           </VList>
@@ -1056,5 +1150,15 @@ onMounted(() => {
 <style scoped>
 .gap-2 {
   gap: 8px;
+}
+.photo-thumbnail {
+  transition: transform 0.2s;
+}
+.photo-thumbnail:hover {
+  transform: scale(1.1);
+  border-color: #1976d2;
+}
+.detail-photo {
+  background: #f5f5f5;
 }
 </style>

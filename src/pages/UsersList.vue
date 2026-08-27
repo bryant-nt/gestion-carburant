@@ -1,8 +1,53 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
+import { axiosIns } from '@/plugins/axios'
 import { useUsersStore } from '@/stores/users'
 import { useRolesStore } from '@/stores/roles'
 import { useAuthStore } from '@/stores/auth'
+
+// --- Gestion des photos protégées (JWT via Axios) -----------------------
+const photoUrlCache = reactive(new Map())
+
+const loadAuthenticatedPhoto = async (id, photoPath) => {
+  if (!photoPath || photoUrlCache.has(id)) return
+
+  try {
+    const cleanPath = photoPath.startsWith('/') ? photoPath : `/${photoPath}`
+    const response = await axiosIns.get(cleanPath, { responseType: 'blob' })
+    const objectUrl = URL.createObjectURL(response.data)
+    photoUrlCache.set(id, objectUrl)
+    console.log('✅ Photo protégée chargée pour ID', id)
+  } catch (error) {
+    console.error('❌ Impossible de charger la photo protégée pour ID', id, error)
+    brokenPhotos.value.add(id)
+  }
+}
+
+const revokeAllPhotoUrls = () => {
+  photoUrlCache.forEach(url => URL.revokeObjectURL(url))
+  photoUrlCache.clear()
+}
+
+const loadPhotosInBatches = async (items, batchSize = 3) => {
+  const tasks = []
+  for (const item of items) {
+    if (item.photoUtilisateur) {
+      tasks.push(loadAuthenticatedPhoto(`user-${item.utilisateurId}`, item.photoUtilisateur))
+    }
+  }
+
+  for (let i = 0; i < tasks.length; i += batchSize) {
+    const batch = tasks.slice(i, i + batchSize)
+    await Promise.all(batch)
+  }
+}
+
+const brokenPhotos = ref(new Set())
+const onPhotoError = (id) => {
+  console.error('❌ Échec d\'affichage de la photo pour ID', id)
+  brokenPhotos.value.add(id)
+}
+// -----------------------------------------------------------------------
 
 // Initialisation des stores
 const usersStore = useUsersStore()
@@ -96,6 +141,9 @@ const loadData = async () => {
       usersStore.fetchUsers(),
       rolesStore.fetchRoles()
     ])
+
+    // Charger les photos des utilisateurs
+    await loadPhotosInBatches(users.value, 3)
   } catch (error) {
     showNotification('Erreur lors du chargement des données', 'error')
     console.error('Erreur lors du chargement des données:', error)
@@ -131,7 +179,7 @@ const openCreateDialog = () => {
   showDialog.value = true
 }
 
-const openEditDialog = (user) => {
+const openEditDialog = async (user) => {
   isEditing.value = true
   formData.value = {
     utilisateurId: user.utilisateurId,
@@ -146,9 +194,23 @@ const openEditDialog = (user) => {
     photoUtilisateur: user.photoUtilisateur || null,
     photoFile: null
   }
-  photoPreview.value = user.photoUtilisateur 
-    ? `http://localhost:8080/${user.photoUtilisateur}` 
-    : null
+
+  // Charger la photo existante pour l'aperçu
+  if (user.photoUtilisateur) {
+    const cacheKey = `user-${user.utilisateurId}`
+    if (photoUrlCache.has(cacheKey)) {
+      photoPreview.value = photoUrlCache.get(cacheKey)
+    } else {
+      photoPreview.value = null
+      await loadAuthenticatedPhoto(cacheKey, user.photoUtilisateur)
+        .then(() => {
+          photoPreview.value = photoUrlCache.get(cacheKey) || null
+        })
+    }
+  } else {
+    photoPreview.value = null
+  }
+
   formErrors.value = {}
   showDialog.value = true
 }
@@ -156,12 +218,10 @@ const openEditDialog = (user) => {
 const onFileChange = (event) => {
   const file = event.target.files[0]
   if (file) {
-    // Vérifier le type de fichier
     if (!file.type.startsWith('image/')) {
       showNotification('Veuillez sélectionner une image', 'error')
       return
     }
-    // Vérifier la taille (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
       showNotification('L\'image ne doit pas dépasser 5MB', 'error')
       return
@@ -229,27 +289,35 @@ const saveUser = async () => {
       idRole: formData.value.idRole
     }
     
-    if (!isEditing.value) {
-      userData.motDePasse = formData.value.motDePasse
-      await usersStore.createUser(userData)
-      showNotification('Utilisateur créé avec succès ! ✅', 'success')
-    } else {
-      await usersStore.updateUser(formData.value.utilisateurId, userData)
-      showNotification('Utilisateur modifié avec succès ! ✅', 'success')
-    }
-    
     // Upload de la photo si un fichier est sélectionné
+    let photoPath = null
     if (formData.value.photoFile) {
       const formDataPhoto = new FormData()
       formDataPhoto.append('file', formData.value.photoFile)
-      
       try {
-        await usersStore.uploadPhoto(formDataPhoto)
-        showNotification('Photo de profil uploadée avec succès ! 📸', 'success')
+        const response = await usersStore.uploadPhoto(formDataPhoto)
+        photoPath = response?.photoUtilisateur
       } catch (photoError) {
         console.error('Erreur lors de l\'upload de la photo:', photoError)
         showNotification('Erreur lors de l\'upload de la photo', 'error')
       }
+    }
+
+    if (!isEditing.value) {
+      userData.motDePasse = formData.value.motDePasse
+      const response = await usersStore.createUser(userData)
+      // Si l'upload a réussi et que le user est créé, on met à jour la photo (selon l'API)
+      if (photoPath && response.utilisateurId) {
+        // Mettre à jour l'utilisateur avec le chemin de la photo
+        await usersStore.updateUser(response.utilisateurId, { ...userData, photoUtilisateur: photoPath })
+      }
+      showNotification('Utilisateur créé avec succès ! ✅', 'success')
+    } else {
+      if (photoPath) {
+        userData.photoUtilisateur = photoPath
+      }
+      await usersStore.updateUser(formData.value.utilisateurId, userData)
+      showNotification('Utilisateur modifié avec succès ! ✅', 'success')
     }
     
     showDialog.value = false
@@ -309,6 +377,11 @@ const resetFilters = () => {
 // Charger les données au montage
 onMounted(() => {
   loadData()
+})
+
+// Libérer la mémoire des Object URLs au démontage
+onUnmounted(() => {
+  revokeAllPhotoUrls()
 })
 </script>
 
@@ -430,11 +503,16 @@ onMounted(() => {
               <td>
                 <VAvatar
                   size="32"
-                  :image="user.photoUtilisateur ? `http://localhost:8080/${user.photoUtilisateur}` : null"
-                  color="primary"
-                  variant="tonal"
+                  :color="(!photoUrlCache.get('user-' + user.utilisateurId) || brokenPhotos.has('user-' + user.utilisateurId)) ? 'primary' : undefined"
+                  :variant="(!photoUrlCache.get('user-' + user.utilisateurId) || brokenPhotos.has('user-' + user.utilisateurId)) ? 'tonal' : undefined"
                 >
-                  <span v-if="!user.photoUtilisateur" class="text-caption font-weight-medium">
+                  <VImg
+                    v-if="photoUrlCache.get('user-' + user.utilisateurId) && !brokenPhotos.has('user-' + user.utilisateurId)"
+                    :src="photoUrlCache.get('user-' + user.utilisateurId)"
+                    cover
+                    @error="onPhotoError('user-' + user.utilisateurId)"
+                  />
+                  <span v-else class="text-caption font-weight-medium">
                     {{ user.prenomUtilisateur?.[0] }}{{ user.nomUtilisateur?.[0] }}
                   </span>
                 </VAvatar>
@@ -531,12 +609,12 @@ onMounted(() => {
             <div class="d-flex align-center mb-4">
               <VAvatar
                 size="80"
-                :image="photoPreview"
-                color="primary"
-                variant="tonal"
+                :color="!photoPreview ? 'primary' : undefined"
+                :variant="!photoPreview ? 'tonal' : undefined"
                 class="me-4"
               >
-                <span v-if="!photoPreview" class="text-h4">
+                <VImg v-if="photoPreview" :src="photoPreview" cover />
+                <span v-else class="text-h4">
                   {{ formData.prenomUtilisateur?.[0] }}{{ formData.nomUtilisateur?.[0] }}
                 </span>
               </VAvatar>

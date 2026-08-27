@@ -117,6 +117,12 @@ export const routes = [
   component: () => import('@/pages/ApprovisionnementList.vue'),
 
 },
+{
+  path: 'profile',
+  component: () => import('@/pages/Profile.vue'),
+ 
+  
+},
     ],
   },
   {

@@ -1,6 +1,7 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import ExcelJS from 'exceljs'
+import { axiosIns } from '@/plugins/axios'
 import { useEquipementsStore } from '@/stores/equipements'
 import { useTypeEquipementStore } from '@/stores/typeEquipement'
 import { useStatutEquipementStore } from '@/stores/statutEquipement'
@@ -50,12 +51,59 @@ const searchQuery = ref('')
 const filterType = ref(null)
 const filterStatut = ref(null)
 
-// Computed
-const equipements = computed(() => {
-  console.log('📦 Équipements dans le computed:', equipementsStore.equipements)
-  return equipementsStore.equipements
-})
+// --- Gestion des photos protégées (JWT via Axios) -----------------------
+// Les fichiers uploadés sont derrière Spring Security -> une balise <img>
+// classique ne peut pas envoyer le token. On récupère donc chaque photo
+// via Axios (qui ajoute le Bearer token via l'intercepteur), on la
+// transforme en blob, puis en URL locale utilisable par VAvatar/<img>.
+// Utilisation de `reactive` (au lieu de `ref`) pour une réactivité fiable
+// sur les mutations de Map (set/delete/clear).
+const photoUrlCache = reactive(new Map())
 
+const loadAuthenticatedPhoto = async (id, photoPath) => {
+  if (!photoPath || photoUrlCache.has(id)) return
+
+  try {
+    const cleanPath = photoPath.startsWith('/') ? photoPath : `/${photoPath}`
+    const response = await axiosIns.get(cleanPath, { responseType: 'blob' })
+    const objectUrl = URL.createObjectURL(response.data)
+    photoUrlCache.set(id, objectUrl)
+    console.log('✅ Photo protégée chargée pour ID', id)
+  } catch (error) {
+    console.error('❌ Impossible de charger la photo protégée pour ID', id, error)
+    brokenPhotos.value.add(id)
+  }
+}
+
+const revokeAllPhotoUrls = () => {
+  photoUrlCache.forEach(url => URL.revokeObjectURL(url))
+  photoUrlCache.clear()
+}
+
+// Charge les photos protégées par petits lots successifs (au lieu de tout
+// lancer en parallèle) pour éviter de saturer le backend.
+const loadPhotosInBatches = async (items, batchSize = 3) => {
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize)
+    await Promise.all(
+      batch.map(e =>
+        e.photoEquipement
+          ? loadAuthenticatedPhoto(e.idEquipement, e.photoEquipement)
+          : Promise.resolve()
+      )
+    )
+  }
+}
+
+// Suivi des photos qui échouent au chargement pour basculer sur l'icône par défaut
+const brokenPhotos = ref(new Set())
+const onPhotoError = (id) => {
+  console.error('❌ Échec d\'affichage de la photo pour ID', id)
+  brokenPhotos.value.add(id)
+}
+
+// Computed
+const equipements = computed(() => equipementsStore.equipements)
 const types = computed(() => typeEquipementStore.types)
 const statuts = computed(() => statutEquipementStore.statuts)
 const carburants = computed(() => typeCarburantStore.types)
@@ -87,25 +135,24 @@ const carburantOptions = computed(() => {
 // Filtrer les équipements
 const filteredEquipements = computed(() => {
   let result = equipements.value
-  
+
   if (searchQuery.value) {
     const query = searchQuery.value.toLowerCase()
-    result = result.filter(e => 
+    result = result.filter(e =>
       e.immatriculationEquipement?.toLowerCase().includes(query) ||
       e.marqueEquipement?.toLowerCase().includes(query) ||
       e.modeleEquipement?.toLowerCase().includes(query)
     )
   }
-  
+
   if (filterType.value) {
     result = result.filter(e => e.idTypeEquipement === filterType.value)
   }
-  
+
   if (filterStatut.value) {
     result = result.filter(e => e.idStatut === filterStatut.value)
   }
-  
-  console.log('🔍 Équipements filtrés:', result)
+
   return result
 })
 
@@ -119,19 +166,12 @@ const loadData = async () => {
       statutEquipementStore.fetchStatuts(),
       typeCarburantStore.fetchTypes()
     ])
-    
-    // DEBUG : Afficher les équipements avec leurs photos
+
     console.log('✅ Données chargées avec succès')
-    console.log('📸 Vérification des photos des équipements:')
-    equipementsStore.equipements.forEach((e, index) => {
-      console.log(`  ${index + 1}. ${e.immatriculationEquipement}:`)
-      console.log(`     - photoEquipement: ${e.photoEquipement}`)
-      console.log(`     - URL complète: ${e.photoEquipement ? `http://localhost:8080/${e.photoEquipement}` : 'AUCUNE PHOTO'}`)
-      console.log(`     - Type: ${e.typeEquipement?.libelleTypeEquipement || 'N/A'}`)
-      console.log(`     - Statut: ${e.statut?.libelleStatut || 'N/A'}`)
-      console.log('---')
-    })
-    
+
+    // Charger les photos protégées par lots
+    await loadPhotosInBatches(equipementsStore.equipements, 3)
+
   } catch (error) {
     console.error('❌ Erreur lors du chargement des données:', error)
     showNotification('Erreur lors du chargement des données', 'error')
@@ -148,16 +188,13 @@ const showNotification = (message, color = 'success') => {
 }
 
 // -----------------------------------------------------------------------
-// Export Excel (ExcelJS) — même gabarit institutionnel que l'export des
-// demandes de carburant : en-tête ministère, colonnes ajustées, couleurs
-// de statut, bordures, filtre automatique, ligne de total
+// Export Excel (ExcelJS)
 // -----------------------------------------------------------------------
 const exportToExcel = async () => {
   if (isExporting.value) return
   isExporting.value = true
 
   try {
-    // On exporte exactement ce que l'utilisateur voit à l'écran (filtres appliqués)
     const dataSource = filteredEquipements.value || []
 
     const workbook = new ExcelJS.Workbook()
@@ -183,7 +220,6 @@ const exportToExcel = async () => {
       { width: 20 }, { width: 16 }, { width: 16 }
     ]
 
-    // --- En-tête institutionnel ---
     worksheet.mergeCells('A1:G1')
     const titleCell = worksheet.getCell('A1')
     titleCell.value = "MINISTÈRE DES FINANCES, DU BUDGET ET DE L'ÉCONOMIE NUMÉRIQUE"
@@ -206,9 +242,8 @@ const exportToExcel = async () => {
     dateCell.alignment = { horizontal: 'center' }
     worksheet.getRow(3).height = 16
 
-    worksheet.getRow(4).height = 6 // séparateur
+    worksheet.getRow(4).height = 6
 
-    // --- Ligne d'en-tête des colonnes ---
     const headerRowIndex = 5
     const headerRow = worksheet.getRow(headerRowIndex)
     headerRow.values = headers
@@ -225,7 +260,6 @@ const exportToExcel = async () => {
       }
     })
 
-    // --- Lignes de données ---
     dataSource.forEach((e, i) => {
       const rowIndex = headerRowIndex + 1 + i
       const row = worksheet.getRow(rowIndex)
@@ -260,10 +294,8 @@ const exportToExcel = async () => {
         })
       }
 
-      // Immatriculation en gras
       row.getCell(2).font = { ...row.getCell(2).font, bold: true }
 
-      // Statut colorié (actif/VIP en vert, sinon rouge — cohérent avec l'affichage écran)
       const statutLibelle = e.statut?.libelleStatut
       const isActif = statutLibelle === 'Actif' || statutLibelle === 'VIP'
       row.getCell(7).font = {
@@ -275,7 +307,6 @@ const exportToExcel = async () => {
 
     const lastDataRow = headerRowIndex + dataSource.length
 
-    // --- Filtre automatique sur les colonnes ---
     if (dataSource.length > 0) {
       worksheet.autoFilter = {
         from: { row: headerRowIndex, column: 1 },
@@ -283,14 +314,12 @@ const exportToExcel = async () => {
       }
     }
 
-    // --- Ligne de total ---
     const totalRowIndex = lastDataRow + 2
     worksheet.mergeCells(`A${totalRowIndex}:D${totalRowIndex}`)
     const totalLabelCell = worksheet.getCell(`A${totalRowIndex}`)
     totalLabelCell.value = `Total des équipements : ${dataSource.length}`
     totalLabelCell.font = { bold: true, size: 10.5, color: { argb: NAVY } }
 
-    // --- Téléchargement ---
     const buffer = await workbook.xlsx.writeBuffer()
     const blob = new Blob([buffer], {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -316,7 +345,6 @@ const exportToExcel = async () => {
 }
 
 const openCreateDialog = () => {
-  console.log('➕ Ouverture du dialogue de création')
   isEditing.value = false
   formData.value = {
     idEquipement: null,
@@ -335,9 +363,6 @@ const openCreateDialog = () => {
 }
 
 const openEditDialog = (equipement) => {
-  console.log('✏️ Ouverture du dialogue de modification pour:', equipement.immatriculationEquipement)
-  console.log('📸 Photo existante:', equipement.photoEquipement)
-  
   isEditing.value = true
   formData.value = {
     idEquipement: equipement.idEquipement,
@@ -350,49 +375,50 @@ const openEditDialog = (equipement) => {
     photoEquipement: equipement.photoEquipement || null,
     photoFile: null
   }
-  
-  // Prévisualisation de la photo existante
+
+  // Prévisualisation de la photo existante : on réutilise le cache si déjà
+  // chargé, sinon on va la chercher
   if (equipement.photoEquipement) {
-    const photoUrl = `http://localhost:8080/${equipement.photoEquipement}`
-    console.log('🖼️ URL de la photo existante:', photoUrl)
-    photoPreview.value = photoUrl
+    const cached = photoUrlCache.get(equipement.idEquipement)
+    if (cached) {
+      photoPreview.value = cached
+    } else {
+      photoPreview.value = null
+      loadAuthenticatedPhoto(equipement.idEquipement, equipement.photoEquipement)
+        .then(() => {
+          photoPreview.value = photoUrlCache.get(equipement.idEquipement) || null
+        })
+    }
   } else {
-    console.log('⚠️ Aucune photo existante pour cet équipement')
     photoPreview.value = null
   }
-  
+
   formErrors.value = {}
   showDialog.value = true
 }
 
 const onFileChange = (event) => {
   const file = event.target.files[0]
-  console.log('📁 Fichier sélectionné:', file ? file.name : 'Aucun fichier')
-  
+
   if (file) {
     if (!file.type.startsWith('image/')) {
-      console.log('❌ Type de fichier invalide:', file.type)
       showNotification('Veuillez sélectionner une image', 'error')
       return
     }
     if (file.size > 5 * 1024 * 1024) {
-      console.log('❌ Fichier trop grand:', file.size, 'bytes')
       showNotification('L\'image ne doit pas dépasser 5MB', 'error')
       return
     }
-    console.log('✅ Fichier valide:', file.name, file.size, 'bytes')
     formData.value.photoFile = file
     const reader = new FileReader()
     reader.onload = (e) => {
       photoPreview.value = e.target.result
-      console.log('🖼️ Prévisualisation chargée')
     }
     reader.readAsDataURL(file)
   }
 }
 
 const removePhoto = () => {
-  console.log('🗑️ Suppression de la photo sélectionnée')
   formData.value.photoFile = null
   photoPreview.value = null
   const fileInput = document.getElementById('photoInput')
@@ -403,54 +429,49 @@ const removePhoto = () => {
 
 const validateForm = () => {
   const errors = {}
-  
+
   if (!formData.value.immatriculationEquipement || formData.value.immatriculationEquipement.trim() === '') {
     errors.immatriculationEquipement = 'L\'immatriculation est requise'
   }
-  
+
   if (!formData.value.marqueEquipement || formData.value.marqueEquipement.trim() === '') {
     errors.marqueEquipement = 'La marque est requise'
   }
-  
+
   if (!formData.value.modeleEquipement || formData.value.modeleEquipement.trim() === '') {
     errors.modeleEquipement = 'Le modèle est requis'
   }
-  
+
   if (!formData.value.idTypeEquipement) {
     errors.idTypeEquipement = 'Le type d\'équipement est requis'
   }
-  
+
   if (!formData.value.idStatut) {
     errors.idStatut = 'Le statut est requis'
   }
-  
+
   if (!formData.value.idCarburant) {
     errors.idCarburant = 'Le carburant est requis'
   }
-  
+
   formErrors.value = errors
-  console.log('📝 Validation du formulaire:', Object.keys(errors).length === 0 ? '✅ Valide' : '❌ Erreurs:', errors)
   return Object.keys(errors).length === 0
 }
 
 const saveEquipement = async () => {
-  console.log('💾 Sauvegarde de l\'équipement...')
   if (!validateForm()) return
-  
+
   isSubmitting.value = true
-  
+
   try {
-    // Upload de la photo en premier si une nouvelle photo est sélectionnée
     let photoPath = null
     if (formData.value.photoFile) {
-      console.log('📤 Upload de la photo en cours...')
       const formDataPhoto = new FormData()
       formDataPhoto.append('file', formData.value.photoFile)
       const photoResponse = await equipementsStore.uploadPhoto(formDataPhoto)
       photoPath = photoResponse?.photoEquipement
-      console.log('✅ Photo uploadée avec succès:', photoPath)
     }
-    
+
     const equipementData = {
       immatriculationEquipement: formData.value.immatriculationEquipement.trim(),
       marqueEquipement: formData.value.marqueEquipement.trim(),
@@ -459,28 +480,33 @@ const saveEquipement = async () => {
       idStatut: formData.value.idStatut,
       idCarburant: formData.value.idCarburant
     }
-    
-    // Ajouter la photo si elle a été uploadée
+
     if (photoPath) {
       equipementData.photoEquipement = photoPath
-      console.log('📸 Photo ajoutée aux données:', photoPath)
     } else if (isEditing.value && formData.value.photoEquipement) {
       equipementData.photoEquipement = formData.value.photoEquipement
-      console.log('📸 Photo existante conservée:', formData.value.photoEquipement)
     }
-    
-    console.log('📦 Données à envoyer:', equipementData)
-    
+
+    let savedId = formData.value.idEquipement
+
     if (!isEditing.value) {
       const response = await equipementsStore.createEquipement(equipementData)
-      console.log('✅ Équipement créé:', response)
+      savedId = response.idEquipement
       showNotification('Équipement créé avec succès ! ✅', 'success')
     } else {
-      const response = await equipementsStore.updateEquipement(formData.value.idEquipement, equipementData)
-      console.log('✅ Équipement modifié:', response)
+      await equipementsStore.updateEquipement(formData.value.idEquipement, equipementData)
       showNotification('Équipement modifié avec succès ! ✅', 'success')
     }
-    
+
+    // Si une nouvelle photo a été uploadée, on invalide l'ancienne entrée
+    // du cache pour forcer un rechargement de la bonne image
+    if (photoPath && savedId) {
+      const oldUrl = photoUrlCache.get(savedId)
+      if (oldUrl) URL.revokeObjectURL(oldUrl)
+      photoUrlCache.delete(savedId)
+      brokenPhotos.value.delete(savedId)
+    }
+
     showDialog.value = false
     await loadData()
   } catch (error) {
@@ -497,18 +523,21 @@ const saveEquipement = async () => {
 }
 
 const confirmDelete = (equipement) => {
-  console.log('🗑️ Confirmation de suppression pour:', equipement.immatriculationEquipement)
   equipementToDelete.value = equipement
   showDeleteDialog.value = true
 }
 
 const deleteEquipement = async () => {
   if (!equipementToDelete.value) return
-  
-  console.log('🗑️ Suppression de l\'équipement:', equipementToDelete.value.immatriculationEquipement)
-  
+
   try {
     await equipementsStore.deleteEquipement(equipementToDelete.value.idEquipement)
+
+    // Nettoyage du cache pour l'équipement supprimé
+    const url = photoUrlCache.get(equipementToDelete.value.idEquipement)
+    if (url) URL.revokeObjectURL(url)
+    photoUrlCache.delete(equipementToDelete.value.idEquipement)
+
     showDeleteDialog.value = false
     showNotification(`Équipement "${equipementToDelete.value.immatriculationEquipement}" supprimé avec succès ! 🗑️`, 'success')
     equipementToDelete.value = null
@@ -520,7 +549,6 @@ const deleteEquipement = async () => {
 }
 
 const resetFilters = () => {
-  console.log('🔄 Réinitialisation des filtres')
   searchQuery.value = ''
   filterType.value = null
   filterStatut.value = null
@@ -528,8 +556,12 @@ const resetFilters = () => {
 
 // Charger les données au montage
 onMounted(() => {
-  console.log('🚀 Composant EquipementsList monté')
   loadData()
+})
+
+// Libérer la mémoire des Object URLs au démontage du composant
+onUnmounted(() => {
+  revokeAllPhotoUrls()
 })
 </script>
 
@@ -612,33 +644,15 @@ onMounted(() => {
         <VTable>
           <thead>
             <tr>
-              <th class="text-uppercase text-center">
-                N°
-              </th>
-              <th>
-                Photo
-              </th>
-              <th>
-                Immatriculation
-              </th>
-              <th>
-                Marque
-              </th>
-              <th>
-                Modèle
-              </th>
-              <th>
-                Type
-              </th>
-              <th>
-                Carburant
-              </th>
-              <th>
-                Statut
-              </th>
-              <th class="text-center">
-                Actions
-              </th>
+              <th class="text-uppercase text-center">N°</th>
+              <th>Photo</th>
+              <th>Immatriculation</th>
+              <th>Marque</th>
+              <th>Modèle</th>
+              <th>Type</th>
+              <th>Carburant</th>
+              <th>Statut</th>
+              <th class="text-center">Actions</th>
             </tr>
           </thead>
 
@@ -662,22 +676,20 @@ onMounted(() => {
                 {{ index + 1 }}
               </td>
               <td>
-                <!-- DEBUG : Afficher l'URL de la photo dans la console -->
-                <div v-if="equipement.photoEquipement" style="display: none;">
-                  {{ console.log('🖼️ Équipement', equipement.immatriculationEquipement, 'Photo:', equipement.photoEquipement, 'URL:', `http://localhost:8080/${equipement.photoEquipement}`) }}
-                </div>
-                
-                <VAvatar
-                  size="40"
-                  :image="equipement.photoEquipement ? `http://localhost:8080/${equipement.photoEquipement}` : null"
-                  color="primary"
-                  variant="tonal"
-                >
-                  <span v-if="!equipement.photoEquipement" class="text-caption font-weight-medium">
-                    <VIcon icon="bx-image" size="20" />
-                  </span>
-                </VAvatar>
-              </td>
+  <VAvatar
+    size="64"
+    :color="(!photoUrlCache.get(equipement.idEquipement) || brokenPhotos.has(equipement.idEquipement)) ? 'primary' : undefined"
+    :variant="(!photoUrlCache.get(equipement.idEquipement) || brokenPhotos.has(equipement.idEquipement)) ? 'tonal' : undefined"
+  >
+    <VImg
+      v-if="photoUrlCache.get(equipement.idEquipement) && !brokenPhotos.has(equipement.idEquipement)"
+      :src="photoUrlCache.get(equipement.idEquipement)"
+      cover
+      @error="onPhotoError(equipement.idEquipement)"
+    />
+    <VIcon v-else icon="bx-image" size="32" />
+  </VAvatar>
+</td>
               <td>
                 <div class="font-weight-medium">
                   {{ equipement.immatriculationEquipement }}
@@ -755,16 +767,14 @@ onMounted(() => {
             <!-- Photo de l'équipement -->
             <div class="d-flex align-center mb-4">
               <VAvatar
-                size="80"
-                :image="photoPreview"
-                color="primary"
-                variant="tonal"
-                class="me-4"
-              >
-                <span v-if="!photoPreview" class="text-h4">
-                  <VIcon icon="bx-image" size="40" />
-                </span>
-              </VAvatar>
+  size="80"
+  :color="!photoPreview ? 'primary' : undefined"
+  :variant="!photoPreview ? 'tonal' : undefined"
+  class="me-4"
+>
+  <VImg v-if="photoPreview" :src="photoPreview" cover />
+  <VIcon v-else icon="bx-image" size="40" />
+</VAvatar>
               <div>
                 <div class="text-caption text-medium-emphasis">Photo de l'équipement</div>
                 <div class="d-flex gap-2 mt-1">
@@ -951,7 +961,7 @@ onMounted(() => {
         class="me-2"
       />
       {{ snackbar.message }}
-      
+
       <template #actions>
         <VBtn
           variant="text"

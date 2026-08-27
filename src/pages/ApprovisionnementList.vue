@@ -1,21 +1,66 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
+import { axiosIns } from '@/plugins/axios'
 import { useApprovisionnementStore } from '@/stores/approvisionnement'
 import { useDemandeCarburantStore } from '@/stores/demandeCarburant'
 import { useStationsStore } from '@/stores/stations'
 import { useAuthStore } from '@/stores/auth'
 
-const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
+// --- Gestion des photos protégées (JWT via Axios) -----------------------
+// Identique aux composants Équipement et Demande.
+// On utilise un cache réactif (Map) pour stocker les URLs locales.
+const photoUrlCache = reactive(new Map())
 
-const getPhotoUrl = (path) => {
-  if (!path) return null
-  if (path.startsWith('http')) return path
-  const token = localStorage.getItem('accessToken')
-  if (token) {
-    return `${API_URL}/${path}?token=${token}`
+// Charge une photo protégée via axios (avec token) et crée une URL objet.
+const loadAuthenticatedPhoto = async (id, photoPath) => {
+  if (!photoPath || photoUrlCache.has(id)) return
+
+  try {
+    const cleanPath = photoPath.startsWith('/') ? photoPath : `/${photoPath}`
+    const response = await axiosIns.get(cleanPath, { responseType: 'blob' })
+    const objectUrl = URL.createObjectURL(response.data)
+    photoUrlCache.set(id, objectUrl)
+    console.log('✅ Photo protégée chargée pour ID', id)
+  } catch (error) {
+    console.error('❌ Impossible de charger la photo protégée pour ID', id, error)
+    brokenPhotos.value.add(id)
   }
-  return `${API_URL}/${path}`
 }
+
+// Libère toutes les URLs objet créées
+const revokeAllPhotoUrls = () => {
+  photoUrlCache.forEach(url => URL.revokeObjectURL(url))
+  photoUrlCache.clear()
+}
+
+// Charge les photos par lots successifs (batchSize = 3) pour éviter de saturer le backend.
+// Chaque élément peut avoir deux champs photo : photoTableauDeBordApres et screenshot.
+// On génère une clé unique pour chaque type : 'apres-{id}' et 'screenshot-{id}'.
+const loadPhotosInBatches = async (items, batchSize = 3) => {
+  const tasks = []
+  for (const item of items) {
+    if (item.photoTableauDeBordApres) {
+      tasks.push(loadAuthenticatedPhoto(`apres-${item.idApprovisionnement}`, item.photoTableauDeBordApres))
+    }
+    if (item.screenshot) {
+      tasks.push(loadAuthenticatedPhoto(`screenshot-${item.idApprovisionnement}`, item.screenshot))
+    }
+  }
+
+  // Exécution par lots pour ne pas surcharger le serveur
+  for (let i = 0; i < tasks.length; i += batchSize) {
+    const batch = tasks.slice(i, i + batchSize)
+    await Promise.all(batch)
+  }
+}
+
+// Suivi des photos qui échouent pour afficher une icône par défaut
+const brokenPhotos = ref(new Set())
+const onPhotoError = (id) => {
+  console.error('❌ Échec d\'affichage de la photo pour ID', id)
+  brokenPhotos.value.add(id)
+}
+// -----------------------------------------------------------------------
 
 // Le backend renvoie dateEnregistrement en tableau [annee, mois, jour, heure, minute, seconde]
 const parseBackendDate = (value) => {
@@ -80,23 +125,15 @@ const activeTab = ref('a-approvisionner')
 
 // Computed
 const approvisionnements = computed(() => approvisionnementStore.approvisionnements || [])
-// ✅ CORRIGÉ : les demandes proposées ici doivent être celles déjà approuvées et prêtes
-// à être servies (scope/pour-approvisionnement), pas celles en attente de validation (scope/a-valider).
-// Fallback [] si le store n'a pas encore été mis à jour avec ce champ (évite le crash "Cannot read properties of undefined").
 const demandes = computed(() => demandeStore.demandesPourApprovisionnement || [])
 const stations = computed(() => stationsStore.allStations)
 const loading = computed(() => approvisionnementStore.loading || demandeStore.loading || stationsStore.loading)
 const pagination = computed(() => approvisionnementStore.pagination)
 const isAdmin = computed(() => authStore.isAdmin)
 
-// Ensemble des idDemande déjà servies, déduit des approvisionnements déjà chargés.
-// Sert de garde-fou supplémentaire : normalement le backend exclut déjà ces demandes
-// de "pour-approvisionnement", mais on double-vérifie côté front pour désactiver le bouton
-// en cas de décalage (ex. juste après création, avant rafraîchissement de la liste).
 const idsDemandesServies = computed(() => {
   return new Set(approvisionnements.value.map(a => a.idDemande))
 })
-
 const estDejaServie = (idDemande) => idsDemandesServies.value.has(idDemande)
 
 // Options
@@ -125,6 +162,9 @@ const loadData = async () => {
       demandeStore.fetchDemandesPourApprovisionnement(),
       stationsStore.fetchStations()
     ])
+
+    // Charger les photos des approvisionnements (historique)
+    await loadPhotosInBatches(approvisionnements.value, 3)
   } catch (error) {
     showNotification('Erreur lors du chargement des données', 'error')
     console.error('Erreur lors du chargement des données:', error)
@@ -229,6 +269,17 @@ const openDetailDialog = async (id) => {
   try {
     const data = await approvisionnementStore.fetchApprovisionnementById(id)
     approvisionnementCourant.value = data
+
+    // Charger les photos si présentes
+    const tasks = []
+    if (data.photoTableauDeBordApres) {
+      tasks.push(loadAuthenticatedPhoto(`apres-${data.idApprovisionnement}`, data.photoTableauDeBordApres))
+    }
+    if (data.screenshot) {
+      tasks.push(loadAuthenticatedPhoto(`screenshot-${data.idApprovisionnement}`, data.screenshot))
+    }
+    await Promise.all(tasks)
+
     showDetailDialog.value = true
   } catch (error) {
     showNotification('Erreur lors du chargement du détail', 'error')
@@ -273,8 +324,6 @@ const createApprovisionnement = async () => {
     const data = {
       idDemande: Number(formData.value.idDemande),
       idStation: Number(formData.value.idStation),
-      // ✅ CORRIGÉ : la doc du POST /approvisionnement attend "quantiteApprovisionnee".
-      // Le champ "quantiteRecue" n'existe que dans les réponses GET (DTO différent en lecture).
       quantiteApprovisionnee: parseFloat(formData.value.quantiteRecue),
       clientOperationId: formData.value.clientOperationId || generateUUID()
     }
@@ -314,6 +363,7 @@ const applyFilters = () => {
   if (dateFrom.value) params.dateFrom = dateFrom.value
   if (dateTo.value) params.dateTo = dateTo.value
   approvisionnementStore.fetchApprovisionnementsPaged(params)
+    .then(() => loadPhotosInBatches(approvisionnements.value, 3))
 }
 
 const resetFilters = () => {
@@ -334,11 +384,17 @@ const changePage = (newPage) => {
   if (dateFrom.value) params.dateFrom = dateFrom.value
   if (dateTo.value) params.dateTo = dateTo.value
   approvisionnementStore.fetchApprovisionnementsPaged(params)
+    .then(() => loadPhotosInBatches(approvisionnements.value, 3))
 }
 
 // Charger les données au montage
 onMounted(() => {
   loadData()
+})
+
+// Libérer la mémoire des Object URLs au démontage
+onUnmounted(() => {
+  revokeAllPhotoUrls()
 })
 </script>
 
@@ -474,14 +530,29 @@ onMounted(() => {
             <tr v-for="(item, index) in approvisionnements" :key="item.idApprovisionnement || index">
               <td class="text-center">{{ (pagination.page * pagination.size) + index + 1 }}</td>
               <td>
-                <VAvatar
-                  size="32"
-                  :image="getPhotoUrl(item.photoTableauDeBordApres)"
-                  color="primary"
-                  variant="tonal"
+                <!-- Vignette photo après -->
+                <div
+                  class="photo-thumbnail"
+                  :style="{
+                    width: '48px',
+                    height: '48px',
+                    borderRadius: '50%',
+                    overflow: 'hidden',
+                    border: '2px solid #e0e0e0',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: '#f5f5f5'
+                  }"
                 >
-                  <VIcon v-if="!item.photoTableauDeBordApres" icon="bx-image" size="16" />
-                </VAvatar>
+                  <VImg
+                    v-if="photoUrlCache.get('apres-' + item.idApprovisionnement) && !brokenPhotos.has('apres-' + item.idApprovisionnement)"
+                    :src="photoUrlCache.get('apres-' + item.idApprovisionnement)"
+                    cover
+                    @error="onPhotoError('apres-' + item.idApprovisionnement)"
+                  />
+                  <VIcon v-else icon="bx-image" size="24" color="grey" />
+                </div>
               </td>
               <td>#{{ item.idDemande }}</td>
               <td class="text-center">
@@ -534,11 +605,24 @@ onMounted(() => {
           <VForm @submit.prevent="createApprovisionnement">
             <!-- Photo Après -->
             <div class="d-flex align-center mb-4">
-              <VAvatar size="60" :image="photoApresPreview" color="primary" variant="tonal" class="me-4">
-                <span v-if="!photoApresPreview" class="text-h4">
-                  <VIcon icon="bx-image" size="30" />
-                </span>
-              </VAvatar>
+              <div
+                class="photo-preview"
+                :style="{
+                  width: '80px',
+                  height: '80px',
+                  borderRadius: '8px',
+                  overflow: 'hidden',
+                  border: '2px solid #e0e0e0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: '#f5f5f5',
+                  marginRight: '16px'
+                }"
+              >
+                <VImg v-if="photoApresPreview" :src="photoApresPreview" cover />
+                <VIcon v-else icon="bx-image" size="40" color="grey" />
+              </div>
               <div>
                 <div class="text-caption text-medium-emphasis">Photo tableau de bord (après)</div>
                 <div class="d-flex gap-2 mt-1">
@@ -559,11 +643,24 @@ onMounted(() => {
 
             <!-- Screenshot -->
             <div class="d-flex align-center mb-4">
-              <VAvatar size="60" :image="screenshotPreview" color="primary" variant="tonal" class="me-4">
-                <span v-if="!screenshotPreview" class="text-h4">
-                  <VIcon icon="bx-image" size="30" />
-                </span>
-              </VAvatar>
+              <div
+                class="photo-preview"
+                :style="{
+                  width: '80px',
+                  height: '80px',
+                  borderRadius: '8px',
+                  overflow: 'hidden',
+                  border: '2px solid #e0e0e0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: '#f5f5f5',
+                  marginRight: '16px'
+                }"
+              >
+                <VImg v-if="screenshotPreview" :src="screenshotPreview" cover />
+                <VIcon v-else icon="bx-image" size="40" color="grey" />
+              </div>
               <div>
                 <div class="text-caption text-medium-emphasis">Capture / preuve pompe (screenshot)</div>
                 <div class="d-flex gap-2 mt-1">
@@ -685,25 +782,51 @@ onMounted(() => {
             <VListItem v-if="approvisionnementCourant.photoTableauDeBordApres">
               <VListItemTitle>Photo après plein</VListItemTitle>
               <VListItemSubtitle>
-                <VImg
-                  :src="getPhotoUrl(approvisionnementCourant.photoTableauDeBordApres)"
-                  max-width="300"
-                  max-height="200"
-                  cover
-                  class="mt-2"
-                />
+                <div
+                  class="detail-photo"
+                  :style="{
+                    maxWidth: '350px',
+                    maxHeight: '250px',
+                    borderRadius: '8px',
+                    overflow: 'hidden',
+                    border: '2px solid #e0e0e0',
+                    marginTop: '8px'
+                  }"
+                >
+                  <VImg
+                    v-if="photoUrlCache.get('apres-' + approvisionnementCourant.idApprovisionnement)"
+                    :src="photoUrlCache.get('apres-' + approvisionnementCourant.idApprovisionnement)"
+                    cover
+                    width="100%"
+                    height="100%"
+                  />
+                  <VProgressCircular v-else indeterminate color="primary" size="24" class="mt-2" />
+                </div>
               </VListItemSubtitle>
             </VListItem>
             <VListItem v-if="approvisionnementCourant.screenshot">
               <VListItemTitle>Preuve pompe</VListItemTitle>
               <VListItemSubtitle>
-                <VImg
-                  :src="getPhotoUrl(approvisionnementCourant.screenshot)"
-                  max-width="300"
-                  max-height="200"
-                  cover
-                  class="mt-2"
-                />
+                <div
+                  class="detail-photo"
+                  :style="{
+                    maxWidth: '350px',
+                    maxHeight: '250px',
+                    borderRadius: '8px',
+                    overflow: 'hidden',
+                    border: '2px solid #e0e0e0',
+                    marginTop: '8px'
+                  }"
+                >
+                  <VImg
+                    v-if="photoUrlCache.get('screenshot-' + approvisionnementCourant.idApprovisionnement)"
+                    :src="photoUrlCache.get('screenshot-' + approvisionnementCourant.idApprovisionnement)"
+                    cover
+                    width="100%"
+                    height="100%"
+                  />
+                  <VProgressCircular v-else indeterminate color="primary" size="24" class="mt-2" />
+                </div>
               </VListItemSubtitle>
             </VListItem>
           </VList>
@@ -730,5 +853,21 @@ onMounted(() => {
 <style scoped>
 .gap-2 {
   gap: 8px;
+}
+.photo-thumbnail {
+  transition: transform 0.2s;
+}
+.photo-thumbnail:hover {
+  transform: scale(1.1);
+  border-color: #1976d2;
+}
+.detail-photo {
+  background: #f5f5f5;
+}
+.photo-preview {
+  transition: border-color 0.2s;
+}
+.photo-preview:hover {
+  border-color: #1976d2;
 }
 </style>

@@ -1,6 +1,7 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import ExcelJS from 'exceljs'
+import { axiosIns } from '@/plugins/axios'
 import { useDemandeCarburantStore } from '@/stores/demandeCarburant'
 import { useValidationDemandeStore } from '@/stores/validationDemande'
 import { useEquipementsStore } from '@/stores/equipements'
@@ -8,16 +9,45 @@ import { useStationsStore } from '@/stores/stations'
 import { useTypeCarburantStore } from '@/stores/typeCarburant'
 import { useAuthStore } from '@/stores/auth'
 
-const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
+// --- Gestion des photos protégées (JWT via Axios), identique à equipement ---
+const photoUrlCache = reactive(new Map())
 
-const getPhotoUrl = (path) => {
-  if (!path) return null
-  if (path.startsWith('http')) return path
-  const token = localStorage.getItem('accessToken')
-  if (token) {
-    return `${API_URL}/${path}?token=${token}`
+const loadAuthenticatedPhoto = async (id, photoPath) => {
+  if (!photoPath || photoUrlCache.has(id)) return
+
+  try {
+    const cleanPath = photoPath.startsWith('/') ? photoPath : `/${photoPath}`
+    const response = await axiosIns.get(cleanPath, { responseType: 'blob' })
+    const objectUrl = URL.createObjectURL(response.data)
+    photoUrlCache.set(id, objectUrl)
+  } catch (error) {
+    console.error('❌ Impossible de charger la photo protégée pour ID', id, error)
+    brokenPhotos.value.add(id)
   }
-  return `${API_URL}/${path}`
+}
+
+const revokeAllPhotoUrls = () => {
+  photoUrlCache.forEach(url => URL.revokeObjectURL(url))
+  photoUrlCache.clear()
+}
+
+const loadPhotosInBatches = async (items, batchSize = 3) => {
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize)
+    await Promise.all(
+      batch.map(item =>
+        item.photoTableauDeBord
+          ? loadAuthenticatedPhoto(item.idDemande, item.photoTableauDeBord)
+          : Promise.resolve()
+      )
+    )
+  }
+}
+
+const brokenPhotos = ref(new Set())
+const onPhotoError = (id) => {
+  console.error('❌ Échec d\'affichage de la photo pour ID', id)
+  brokenPhotos.value.add(id)
 }
 
 // Le backend renvoie parfois les dates en tableau [annee, mois, jour, heure, minute, seconde]
@@ -152,6 +182,8 @@ const loadData = async () => {
       stationsStore.fetchStations(),
       carburantsStore.fetchTypes()
     ])
+
+    await loadPhotosInBatches(demandeStore.demandesAValider, 3)
   } catch (error) {
     showNotification('Erreur lors du chargement des données', 'error')
     console.error('Erreur lors du chargement des données:', error)
@@ -167,6 +199,8 @@ const loadDemandesAValider = async () => {
     if (includeAll.value) params.includeAll = true
     if (searchQuery.value) params.search = searchQuery.value
     await demandeStore.fetchDemandesAValider(params)
+
+    await loadPhotosInBatches(demandeStore.demandesAValider, 3)
   } catch (error) {
     showNotification('Erreur lors du chargement des demandes', 'error')
   }
@@ -186,6 +220,24 @@ const generateUUID = () => {
     var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8)
     return v.toString(16)
   })
+}
+
+// Trouve l'étape de validation "en attente" dans le tableau validations[] de la demande
+const findEtapeEnAttente = (demande) => {
+  const validations = demande?.validations || []
+  return validations.find(v => (v.statutValidation || '').toLowerCase().includes('attente')) || null
+}
+
+// Retourne les infos de l'étape de validation en attente pour une demande donnée
+const getEtapeEnAttente = (demande) => {
+  const etape = findEtapeEnAttente(demande)
+  if (!etape) return null
+  return {
+    niveau: etape.niveauValidation,
+    utilisateur: etape.utilisateur
+      ? `${etape.utilisateur.prenomUtilisateur} ${etape.utilisateur.nomUtilisateur}`
+      : null
+  }
 }
 
 // -----------------------------------------------------------------------
@@ -447,16 +499,15 @@ const openDetailDialog = async (id) => {
   try {
     const data = await demandeStore.fetchDemandeById(id)
     demandeCourante.value = data
+
+    if (data.photoTableauDeBord) {
+      await loadAuthenticatedPhoto(data.idDemande, data.photoTableauDeBord)
+    }
+
     showDetailDialog.value = true
   } catch (error) {
     showNotification('Erreur lors du chargement du détail', 'error')
   }
-}
-
-// Trouve l'étape de validation "en attente" dans le tableau validations[] de la demande
-const findEtapeEnAttente = (demande) => {
-  const validations = demande?.validations || []
-  return validations.find(v => (v.statutValidation || '').toLowerCase().includes('attente')) || null
 }
 
 const openValidationDialog = (action, demande) => {
@@ -605,6 +656,11 @@ const applyFilters = () => {
 onMounted(() => {
   loadData()
 })
+
+// Libérer la mémoire des Object URLs au démontage du composant
+onUnmounted(() => {
+  revokeAllPhotoUrls()
+})
 </script>
 
 <template>
@@ -693,32 +749,48 @@ onMounted(() => {
               <th>Carburant</th>
               <th class="text-center">Qté</th>
               <th class="text-center">Statut</th>
+              <th class="text-uppercase text-center">Étape</th>
               <th class="text-center">Date</th>
               <th class="text-center">Actions</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="10" class="text-center pa-4">
+              <td colspan="11" class="text-center pa-4">
                 <VProgressCircular indeterminate color="primary" />
               </td>
             </tr>
             <tr v-else-if="demandesAValider.length === 0">
-              <td colspan="10" class="text-center pa-4 text-medium-emphasis">
+              <td colspan="11" class="text-center pa-4 text-medium-emphasis">
                 Aucune demande en attente de validation
               </td>
             </tr>
             <tr v-for="(demande, index) in demandesAValider" :key="demande.idDemande || index">
               <td class="text-center">{{ (pagination.page * pagination.size) + index + 1 }}</td>
               <td>
-                <VAvatar
-                  size="32"
-                  :image="getPhotoUrl(demande.photoTableauDeBord)"
-                  color="primary"
-                  variant="tonal"
+                <!-- Photo en cercle 48px -->
+                <div
+                  class="photo-thumbnail"
+                  :style="{
+                    width: '48px',
+                    height: '48px',
+                    borderRadius: '50%',
+                    overflow: 'hidden',
+                    border: '2px solid #e0e0e0',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: '#f5f5f5'
+                  }"
                 >
-                  <VIcon v-if="!demande.photoTableauDeBord" icon="bx-image" size="16" />
-                </VAvatar>
+                  <VImg
+                    v-if="photoUrlCache.get(demande.idDemande) && !brokenPhotos.has(demande.idDemande)"
+                    :src="photoUrlCache.get(demande.idDemande)"
+                    cover
+                    @error="onPhotoError(demande.idDemande)"
+                  />
+                  <VIcon v-else icon="bx-image" size="24" color="grey" />
+                </div>
               </td>
               <td>{{ demande.utilisateur?.prenomUtilisateur }} {{ demande.utilisateur?.nomUtilisateur }}</td>
               <td>{{ demande.equipement?.immatriculationEquipement || '-' }}</td>
@@ -733,6 +805,18 @@ onMounted(() => {
                 <VChip size="small" label :color="statutColor(demande.statutDemande)">
                   {{ demande.statutDemande || '-' }}
                 </VChip>
+              </td>
+              <!-- Nouvelle colonne Étape -->
+              <td class="text-center">
+                <template v-if="getEtapeEnAttente(demande)">
+                  <VChip size="small" label color="warning">
+                    Niveau {{ getEtapeEnAttente(demande).niveau }}
+                  </VChip>
+                  <div class="text-caption" v-if="getEtapeEnAttente(demande).utilisateur">
+                    {{ getEtapeEnAttente(demande).utilisateur }}
+                  </div>
+                </template>
+                <span v-else class="text-caption">-</span>
               </td>
               <td class="text-center">{{ formatDate(demande.dateEnregistrement) }}</td>
               <td class="text-center">
@@ -792,13 +876,27 @@ onMounted(() => {
         </VCardItem>
         <VCardText>
           <VForm @submit.prevent="createDemande">
-            <!-- Photo -->
+            <!-- Photo (aperçu local avant envoi : FileReader, indépendant du cache authentifié) -->
             <div class="d-flex align-center mb-4">
-              <VAvatar size="60" :image="photoPreview" color="primary" variant="tonal" class="me-4">
-                <span v-if="!photoPreview" class="text-h4">
-                  <VIcon icon="bx-image" size="30" />
-                </span>
-              </VAvatar>
+              <!-- Aperçu plus grand (80px) -->
+              <div
+                class="photo-preview"
+                :style="{
+                  width: '80px',
+                  height: '80px',
+                  borderRadius: '8px',
+                  overflow: 'hidden',
+                  border: '2px solid #e0e0e0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: '#f5f5f5',
+                  marginRight: '16px'
+                }"
+              >
+                <VImg v-if="photoPreview" :src="photoPreview" cover />
+                <VIcon v-else icon="bx-image" size="40" color="grey" />
+              </div>
               <div>
                 <div class="text-caption text-medium-emphasis">Photo tableau de bord</div>
                 <div class="d-flex gap-2 mt-1">
@@ -939,13 +1037,27 @@ onMounted(() => {
             <VListItem v-if="demandeCourante.photoTableauDeBord">
               <VListItemTitle>Photo</VListItemTitle>
               <VListItemSubtitle>
-                <VImg
-                  :src="getPhotoUrl(demandeCourante.photoTableauDeBord)"
-                  max-width="300"
-                  max-height="200"
-                  cover
-                  class="mt-2"
-                />
+                <!-- Affichage plus grand et avec bordure -->
+                <div
+                  class="detail-photo"
+                  :style="{
+                    maxWidth: '350px',
+                    maxHeight: '250px',
+                    borderRadius: '8px',
+                    overflow: 'hidden',
+                    border: '2px solid #e0e0e0',
+                    marginTop: '8px'
+                  }"
+                >
+                  <VImg
+                    v-if="photoUrlCache.get(demandeCourante.idDemande)"
+                    :src="photoUrlCache.get(demandeCourante.idDemande)"
+                    cover
+                    width="100%"
+                    height="100%"
+                  />
+                  <VProgressCircular v-else indeterminate color="primary" size="24" class="mt-2" />
+                </div>
               </VListItemSubtitle>
             </VListItem>
             <VListItem v-if="demandeCourante.validations?.length">
@@ -1036,5 +1148,21 @@ onMounted(() => {
 <style scoped>
 .gap-2 {
   gap: 8px;
+}
+.photo-thumbnail {
+  transition: transform 0.2s;
+}
+.photo-thumbnail:hover {
+  transform: scale(1.1);
+  border-color: #1976d2;
+}
+.detail-photo {
+  background: #f5f5f5;
+}
+.photo-preview {
+  transition: border-color 0.2s;
+}
+.photo-preview:hover {
+  border-color: #1976d2;
 }
 </style>
