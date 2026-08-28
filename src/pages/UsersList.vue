@@ -48,12 +48,12 @@ const onPhotoError = (id) => {
 }
 // -----------------------------------------------------------------------
 
-// Initialisation des stores
+// Stores
 const usersStore = useUsersStore()
 const rolesStore = useRolesStore()
 const authStore = useAuthStore()
 
-// État du dialogue
+// Dialog state
 const showDialog = ref(false)
 const isEditing = ref(false)
 const formData = ref({
@@ -73,12 +73,12 @@ const formErrors = ref({})
 const isSubmitting = ref(false)
 const photoPreview = ref(null)
 
-// État du dialogue de confirmation
+// Confirmation dialog
 const showConfirmDialog = ref(false)
 const confirmAction = ref(null)
 const userToConfirm = ref(null)
 
-// État du snackbar
+// Snackbar
 const snackbar = ref({
   show: false,
   message: '',
@@ -86,22 +86,25 @@ const snackbar = ref({
   timeout: 3000
 })
 
-// Filtres
+// Filters
 const searchQuery = ref('')
 const filterRole = ref(null)
 const filterStatus = ref(null)
+
+// Pagination
+const currentPage = ref(1)
+const itemsPerPage = ref(10)
 
 // Computed
 const users = computed(() => usersStore.users)
 const roles = computed(() => rolesStore.roles)
 const loading = computed(() => usersStore.loading || rolesStore.loading)
 
-// Statistiques d'en-tête
+// Stats
 const totalUsers = computed(() => users.value.length)
 const activeUsersCount = computed(() => users.value.filter(u => u.statutUtilisateur === 'actif').length)
 const inactiveUsersCount = computed(() => totalUsers.value - activeUsersCount.value)
 
-// Options pour les roles
 const roleOptions = computed(() => {
   return roles.value.map(role => ({
     title: role.libelleRole,
@@ -118,7 +121,7 @@ const hasActiveFilters = computed(() =>
   !!searchQuery.value || !!filterRole.value || !!filterStatus.value
 )
 
-// Filtrer les utilisateurs
+// Filtered users
 const filteredUsers = computed(() => {
   let result = users.value
 
@@ -142,7 +145,16 @@ const filteredUsers = computed(() => {
   return result
 })
 
-// Couleur de rôle stable (dérivée du libellé, pas aléatoire)
+// Paginated users
+const paginatedUsers = computed(() => {
+  const start = (currentPage.value - 1) * itemsPerPage.value
+  const end = start + itemsPerPage.value
+  return filteredUsers.value.slice(start, end)
+})
+
+const totalPages = computed(() => Math.ceil(filteredUsers.value.length / itemsPerPage.value))
+
+// Role color
 const roleColorPalette = ['primary', 'info', 'success', 'warning', 'secondary', 'error']
 const roleColor = (roleLabel) => {
   if (!roleLabel) return 'secondary'
@@ -155,15 +167,13 @@ const roleColor = (roleLabel) => {
 
 const initials = (user) => `${user.prenomUtilisateur?.[0] || ''}${user.nomUtilisateur?.[0] || ''}`.toUpperCase()
 
-// Méthodes
+// Methods
 const loadData = async () => {
   try {
     await Promise.all([
       usersStore.fetchUsers(),
       rolesStore.fetchRoles()
     ])
-
-    // Charger les photos des utilisateurs
     await loadPhotosInBatches(users.value, 3)
   } catch (error) {
     showNotification('Erreur lors du chargement des données', 'error')
@@ -216,7 +226,6 @@ const openEditDialog = async (user) => {
     photoFile: null
   }
 
-  // Charger la photo existante pour l'aperçu
   if (user.photoUtilisateur) {
     const cacheKey = `user-${user.utilisateurId}`
     if (photoUrlCache.has(cacheKey)) {
@@ -310,7 +319,6 @@ const saveUser = async () => {
       idRole: formData.value.idRole
     }
 
-    // Upload de la photo si un fichier est sélectionné
     let photoPath = null
     if (formData.value.photoFile) {
       const formDataPhoto = new FormData()
@@ -327,7 +335,6 @@ const saveUser = async () => {
     if (!isEditing.value) {
       userData.motDePasse = formData.value.motDePasse
       const response = await usersStore.createUser(userData)
-      // Si l'upload a réussi et que le user est créé, on met à jour la photo (selon l'API)
       if (photoPath && response.utilisateurId) {
         await usersStore.updateUser(response.utilisateurId, { ...userData, photoUtilisateur: photoPath })
       }
@@ -392,14 +399,18 @@ const resetFilters = () => {
   searchQuery.value = ''
   filterRole.value = null
   filterStatus.value = null
+  currentPage.value = 1
 }
 
-// Charger les données au montage
+const changePage = (page) => {
+  currentPage.value = page
+}
+
+// Lifecycle
 onMounted(() => {
   loadData()
 })
 
-// Libérer la mémoire des Object URLs au démontage
 onUnmounted(() => {
   revokeAllPhotoUrls()
 })
@@ -407,61 +418,96 @@ onUnmounted(() => {
 
 <template>
   <VRow>
-    <!-- En-tête + statistiques -->
     <VCol cols="12">
-      <VCard class="users-header-card" flat>
-        <VCardText class="d-flex flex-wrap align-center justify-space-between gap-4">
-          <div class="d-flex align-center gap-3">
-            <VAvatar size="48" color="primary" variant="tonal" rounded="lg">
-              <VIcon icon="bx-group" size="26" />
-            </VAvatar>
-            <div>
-              <h5 class="text-h5 font-weight-medium mb-0">
-                Gestion des utilisateurs
-              </h5>
-              <span class="text-body-2 text-medium-emphasis">
-                Comptes, rôles et accès de la plateforme
-              </span>
+      <!-- Page Header -->
+      <div class="d-flex align-center justify-space-between mb-6 flex-wrap gap-4">
+        <div>
+          <h1 class="text-h4 font-weight-bold text-primary">Gestion des utilisateurs</h1>
+          <p class="text-medium-emphasis text-subtitle-1 mt-1">
+            Gérez les comptes, rôles et accès de la plateforme
+          </p>
+        </div>
+        <VBtn color="primary" size="large" prepend-icon="bx-plus" @click="openCreateDialog" elevation="2">
+          Ajouter un utilisateur
+        </VBtn>
+      </div>
+
+      <!-- Stats Cards -->
+      <VRow class="mb-6">
+        <VCol cols="12" sm="6" md="4">
+          <VCard variant="tonal" color="primary" class="stat-card" rounded="lg">
+            <VCardText class="d-flex align-center pa-4">
+              <div class="stat-icon rounded-circle bg-primary-light pa-3 me-4">
+                <VIcon icon="bx-group" size="28" color="primary" />
+              </div>
+              <div>
+                <div class="text-caption text-uppercase font-weight-medium text-medium-emphasis">
+                  Total utilisateurs
+                </div>
+                <div class="text-h4 font-weight-bold">{{ totalUsers }}</div>
+              </div>
+            </VCardText>
+          </VCard>
+        </VCol>
+
+        <VCol cols="12" sm="6" md="4">
+          <VCard variant="tonal" color="success" class="stat-card" rounded="lg">
+            <VCardText class="d-flex align-center pa-4">
+              <div class="stat-icon rounded-circle bg-success-light pa-3 me-4">
+                <VIcon icon="bx-check-circle" size="28" color="success" />
+              </div>
+              <div>
+                <div class="text-caption text-uppercase font-weight-medium text-medium-emphasis">
+                  Actifs
+                </div>
+                <div class="text-h4 font-weight-bold">{{ activeUsersCount }}</div>
+              </div>
+            </VCardText>
+          </VCard>
+        </VCol>
+
+        <VCol cols="12" sm="6" md="4">
+          <VCard variant="tonal" color="error" class="stat-card" rounded="lg">
+            <VCardText class="d-flex align-center pa-4">
+              <div class="stat-icon rounded-circle bg-error-light pa-3 me-4">
+                <VIcon icon="bx-x-circle" size="28" color="error" />
+              </div>
+              <div>
+                <div class="text-caption text-uppercase font-weight-medium text-medium-emphasis">
+                  Inactifs
+                </div>
+                <div class="text-h4 font-weight-bold">{{ inactiveUsersCount }}</div>
+              </div>
+            </VCardText>
+          </VCard>
+        </VCol>
+      </VRow>
+
+      <!-- Main Card -->
+      <VCard rounded="lg" elevation="0" class="main-card">
+        <VCardItem class="border-bottom">
+          <div class="d-flex align-center justify-space-between flex-wrap gap-3 w-100">
+            <VCardTitle class="text-h6 font-weight-semibold">
+              Liste des utilisateurs
+              <VChip size="small" color="primary" variant="tonal" class="ms-2">
+                {{ filteredUsers.length }}
+              </VChip>
+            </VCardTitle>
+            <div class="d-flex align-center gap-2">
+              <VBtn variant="text" icon="bx-refresh" size="small" @click="loadData" :loading="loading" />
             </div>
           </div>
+        </VCardItem>
 
-          <div class="d-flex flex-wrap align-center gap-3">
-            <div class="stat-pill">
-              <span class="stat-pill__value">{{ totalUsers }}</span>
-              <span class="stat-pill__label">Total</span>
-            </div>
-            <div class="stat-pill stat-pill--success">
-              <span class="stat-pill__value">{{ activeUsersCount }}</span>
-              <span class="stat-pill__label">Actifs</span>
-            </div>
-            <div class="stat-pill stat-pill--error">
-              <span class="stat-pill__value">{{ inactiveUsersCount }}</span>
-              <span class="stat-pill__label">Inactifs</span>
-            </div>
-
-            <VBtn
-              color="primary"
-              prepend-icon="bx-plus"
-              @click="openCreateDialog"
-            >
-              Ajouter un utilisateur
-            </VBtn>
-          </div>
-        </VCardText>
-      </VCard>
-    </VCol>
-
-    <!-- Filtres -->
-    <VCol cols="12">
-      <VCard flat>
-        <VCardText>
-          <VRow align="center">
-            <VCol cols="12" md="4">
+        <!-- Filters -->
+        <VCardText class="pt-4 pb-2">
+          <VRow>
+            <VCol cols="12" md="3">
               <VTextField
                 v-model="searchQuery"
                 label="Rechercher"
                 placeholder="Nom, prénom ou email"
-                density="compact"
+                density="comfortable"
                 variant="outlined"
                 prepend-inner-icon="bx-search"
                 clearable
@@ -476,10 +522,9 @@ onUnmounted(() => {
                 item-title="title"
                 item-value="value"
                 placeholder="Tous les rôles"
-                prepend-inner-icon="bx-shield-quarter"
-                variant="outlined"
                 clearable
-                density="compact"
+                density="comfortable"
+                variant="outlined"
                 hide-details
               />
             </VCol>
@@ -491,91 +536,59 @@ onUnmounted(() => {
                 item-title="title"
                 item-value="value"
                 placeholder="Tous les statuts"
-                prepend-inner-icon="bx-toggle-left"
-                variant="outlined"
                 clearable
-                density="compact"
+                density="comfortable"
+                variant="outlined"
                 hide-details
               />
             </VCol>
-            <VCol cols="12" md="2" class="d-flex justify-end">
+            <VCol cols="12" md="3" class="d-flex align-center gap-2">
               <VBtn
-                color="secondary"
-                variant="tonal"
-                prepend-icon="bx-reset"
-                :disabled="!hasActiveFilters"
-                block
+                color="primary"
+                variant="flat"
                 @click="resetFilters"
+                class="flex-grow-1"
+                :disabled="!hasActiveFilters"
               >
+                <VIcon icon="bx-undo" size="20" class="me-1" />
                 Réinitialiser
               </VBtn>
             </VCol>
           </VRow>
         </VCardText>
 
-        <VDivider />
-
-        <!-- Tableau des utilisateurs -->
-        <VTable class="users-table">
+        <!-- Table -->
+        <VTable class="custom-table">
           <thead>
             <tr>
-              <th class="text-uppercase text-center" style="width: 56px;">
-                N°
-              </th>
-              <th style="width: 64px;">
-                Photo
-              </th>
-              <th>
-                Nom complet
-              </th>
-              <th>
-                Email
-              </th>
-              <th>
-                Téléphone
-              </th>
-              <th>
-                Rôle
-              </th>
-              <th>
-                Unité
-              </th>
-              <th class="text-center">
-                Statut
-              </th>
-              <th class="text-center" style="width: 140px;">
-                Actions
-              </th>
+              <th class="text-uppercase text-center text-caption font-weight-bold" style="width: 60px;">N°</th>
+              <th class="text-uppercase text-caption font-weight-bold" style="width: 60px;">Photo</th>
+              <th class="text-uppercase text-caption font-weight-bold">Nom complet</th>
+              <th class="text-uppercase text-caption font-weight-bold">Email</th>
+              <th class="text-uppercase text-caption font-weight-bold">Téléphone</th>
+              <th class="text-uppercase text-caption font-weight-bold">Rôle</th>
+              <th class="text-uppercase text-caption font-weight-bold">Unité</th>
+              <th class="text-uppercase text-caption font-weight-bold text-center">Statut</th>
+              <th class="text-uppercase text-caption font-weight-bold text-center" style="width: 140px;">Actions</th>
             </tr>
           </thead>
-
           <tbody>
             <tr v-if="loading">
-              <td colspan="9" class="text-center pa-8">
-                <VProgressCircular indeterminate color="primary" size="32" />
-                <div class="text-body-2 text-medium-emphasis mt-2">
-                  Chargement des utilisateurs…
-                </div>
+              <td colspan="9" class="text-center pa-6">
+                <VProgressCircular indeterminate color="primary" size="40" />
+                <div class="text-caption text-medium-emphasis mt-2">Chargement des utilisateurs…</div>
               </td>
             </tr>
             <tr v-else-if="filteredUsers.length === 0">
               <td colspan="9" class="text-center pa-8">
-                <VIcon icon="bx-user-x" size="40" class="text-disabled mb-2" />
-                <div class="text-body-1 font-weight-medium">
-                  Aucun utilisateur trouvé
-                </div>
-                <div class="text-body-2 text-medium-emphasis">
-                  Essayez d'ajuster votre recherche ou vos filtres
-                </div>
+                <VIcon icon="bx-user-x" size="48" color="grey-lighten-1" />
+                <div class="text-h6 font-weight-medium mt-2 text-medium-emphasis">Aucun utilisateur trouvé</div>
+                <p class="text-caption text-medium-emphasis">Ajustez vos filtres ou ajoutez un nouvel utilisateur</p>
               </td>
             </tr>
-            <tr
-              v-for="(user, index) in filteredUsers"
-              :key="user.utilisateurId"
-              class="users-table__row"
-            >
-              <td class="text-center text-medium-emphasis">
-                {{ index + 1 }}
+            <tr v-for="(user, index) in paginatedUsers" :key="user.utilisateurId" class="table-row">
+              <td class="text-center font-weight-medium text-caption">
+                {{ (currentPage - 1) * itemsPerPage + index + 1 }}
               </td>
               <td>
                 <VAvatar
@@ -589,35 +602,20 @@ onUnmounted(() => {
                     cover
                     @error="onPhotoError('user-' + user.utilisateurId)"
                   />
-                  <span v-else class="text-caption font-weight-medium">
-                    {{ initials(user) }}
-                  </span>
+                  <span v-else class="text-caption font-weight-medium">{{ initials(user) }}</span>
                 </VAvatar>
               </td>
               <td>
-                <div class="font-weight-medium">
-                  {{ user.prenomUtilisateur }} {{ user.nomUtilisateur }}
-                </div>
+                <div class="font-weight-medium">{{ user.prenomUtilisateur }} {{ user.nomUtilisateur }}</div>
               </td>
-              <td class="text-medium-emphasis">
-                {{ user.emailUtilisateur }}
-              </td>
-              <td class="text-medium-emphasis">
-                {{ user.telephoneUtilisateur || '—' }}
-              </td>
+              <td class="text-medium-emphasis">{{ user.emailUtilisateur }}</td>
+              <td class="text-medium-emphasis">{{ user.telephoneUtilisateur || '—' }}</td>
               <td>
-                <VChip
-                  size="small"
-                  label
-                  :color="roleColor(user.role?.libelleRole)"
-                  variant="tonal"
-                >
+                <VChip size="small" label :color="roleColor(user.role?.libelleRole)" variant="tonal">
                   {{ user.role?.libelleRole || '—' }}
                 </VChip>
               </td>
-              <td class="text-medium-emphasis">
-                {{ user.uniteOrganisationnelles?.libelleUnite || '—' }}
-              </td>
+              <td class="text-medium-emphasis">{{ user.uniteOrganisationnelles?.libelleUnite || '—' }}</td>
               <td class="text-center">
                 <VChip
                   size="small"
@@ -625,11 +623,7 @@ onUnmounted(() => {
                   :color="user.statutUtilisateur === 'actif' ? 'success' : 'error'"
                   variant="tonal"
                 >
-                  <VIcon
-                    :icon="user.statutUtilisateur === 'actif' ? 'bx-check-circle' : 'bx-x-circle'"
-                    size="14"
-                    start
-                  />
+                  <VIcon :icon="user.statutUtilisateur === 'actif' ? 'bx-check-circle' : 'bx-x-circle'" size="14" start />
                   {{ user.statutUtilisateur === 'actif' ? 'Actif' : 'Inactif' }}
                 </VChip>
               </td>
@@ -637,42 +631,21 @@ onUnmounted(() => {
                 <div class="d-flex justify-center gap-1">
                   <VTooltip text="Modifier">
                     <template #activator="{ props }">
-                      <VBtn
-                        v-bind="props"
-                        icon
-                        variant="text"
-                        size="small"
-                        color="primary"
-                        @click="openEditDialog(user)"
-                      >
+                      <VBtn v-bind="props" icon variant="text" size="small" color="primary" @click="openEditDialog(user)">
                         <VIcon size="20" icon="bx-edit" />
                       </VBtn>
                     </template>
                   </VTooltip>
                   <VTooltip v-if="user.statutUtilisateur === 'actif'" text="Désactiver">
                     <template #activator="{ props }">
-                      <VBtn
-                        v-bind="props"
-                        icon
-                        variant="text"
-                        size="small"
-                        color="warning"
-                        @click="confirmDeactivate(user)"
-                      >
+                      <VBtn v-bind="props" icon variant="text" size="small" color="warning" @click="confirmDeactivate(user)">
                         <VIcon size="20" icon="bx-pause-circle" />
                       </VBtn>
                     </template>
                   </VTooltip>
                   <VTooltip text="Supprimer">
                     <template #activator="{ props }">
-                      <VBtn
-                        v-bind="props"
-                        icon
-                        variant="text"
-                        size="small"
-                        color="error"
-                        @click="confirmDelete(user)"
-                      >
+                      <VBtn v-bind="props" icon variant="text" size="small" color="error" @click="confirmDelete(user)">
                         <VIcon size="20" icon="bx-trash" />
                       </VBtn>
                     </template>
@@ -683,34 +656,43 @@ onUnmounted(() => {
           </tbody>
         </VTable>
 
-        <VCardText v-if="!loading && filteredUsers.length > 0" class="text-body-2 text-medium-emphasis py-3">
-          {{ filteredUsers.length }} utilisateur(s) affiché(s) sur {{ totalUsers }}
-        </VCardText>
+        <!-- Pagination -->
+        <div
+          class="px-4 py-3 d-flex justify-space-between align-center border-top"
+          v-if="filteredUsers.length > 0"
+        >
+          <span class="text-caption text-medium-emphasis">
+            {{ filteredUsers.length }} utilisateur(s) — Page {{ currentPage }} / {{ totalPages || 1 }}
+          </span>
+          <VPagination
+            v-model="currentPage"
+            :length="totalPages || 1"
+            :total-visible="5"
+            @update:model-value="changePage"
+            color="primary"
+            variant="tonal"
+            size="small"
+          />
+        </div>
       </VCard>
     </VCol>
 
-    <!-- Dialogue d'ajout/édition -->
-    <VDialog
-      v-model="showDialog"
-      max-width="640"
-      persistent
-    >
-      <VCard>
-        <VCardItem class="dialog-header">
-          <VCardTitle class="d-flex align-center gap-2">
-            <VIcon :icon="isEditing ? 'bx-edit' : 'bx-user-plus'" size="20" />
+    <!-- Dialog: Ajouter / Modifier -->
+    <VDialog v-model="showDialog" max-width="640" persistent transition="fade-transition">
+      <VCard rounded="lg" class="dialog-card">
+        <VCardItem class="border-bottom">
+          <VCardTitle class="d-flex align-center gap-2 text-h6 font-weight-bold">
+            <VIcon :icon="isEditing ? 'bx-edit' : 'bx-user-plus'" color="primary" size="28" />
             {{ isEditing ? 'Modifier l\'utilisateur' : 'Ajouter un utilisateur' }}
           </VCardTitle>
-          <VCardSubtitle>
+          <VCardSubtitle class="mt-1 text-medium-emphasis">
             {{ isEditing ? 'Modifiez les informations de l\'utilisateur' : 'Saisissez les informations du nouvel utilisateur' }}
           </VCardSubtitle>
         </VCardItem>
 
-        <VDivider />
-
-        <VCardText class="pt-5">
+        <VCardText class="pt-6">
           <VForm @submit.prevent="saveUser">
-            <!-- Photo de profil -->
+            <!-- Photo -->
             <div class="d-flex align-center mb-6">
               <VAvatar
                 size="80"
@@ -724,9 +706,7 @@ onUnmounted(() => {
                 </span>
               </VAvatar>
               <div>
-                <div class="text-caption text-medium-emphasis text-uppercase font-weight-medium">
-                  Photo de profil
-                </div>
+                <div class="text-caption text-medium-emphasis text-uppercase font-weight-medium">Photo de profil</div>
                 <div class="d-flex gap-2 mt-2">
                   <VBtn
                     size="small"
@@ -748,24 +728,14 @@ onUnmounted(() => {
                     Supprimer
                   </VBtn>
                 </div>
-                <input
-                  ref="fileInput"
-                  id="photoInput"
-                  type="file"
-                  accept="image/*"
-                  class="d-none"
-                  @change="onFileChange"
-                />
-                <div class="text-caption text-medium-emphasis mt-1">
-                  JPG, PNG ou GIF (max 5MB)
-                </div>
+                <input ref="fileInput" id="photoInput" type="file" accept="image/*" class="d-none" @change="onFileChange" />
+                <div class="text-caption text-medium-emphasis mt-1">JPG, PNG ou GIF (max 5MB)</div>
               </div>
             </div>
 
             <!-- Informations personnelles -->
             <div class="form-section-label">
-              <VIcon icon="bx-id-card" size="16" />
-              Informations personnelles
+              <VIcon icon="bx-id-card" size="16" /> Informations personnelles
             </div>
             <VRow>
               <VCol cols="12" md="6">
@@ -795,8 +765,7 @@ onUnmounted(() => {
 
             <!-- Coordonnées -->
             <div class="form-section-label mt-2">
-              <VIcon icon="bx-envelope" size="16" />
-              Coordonnées
+              <VIcon icon="bx-envelope" size="16" /> Coordonnées
             </div>
             <VRow>
               <VCol cols="12">
@@ -834,8 +803,7 @@ onUnmounted(() => {
 
             <!-- Rôle et statut -->
             <div class="form-section-label mt-2">
-              <VIcon icon="bx-shield-quarter" size="16" />
-              Rôle et accès
+              <VIcon icon="bx-shield-quarter" size="16" /> Rôle et accès
             </div>
             <VRow>
               <VCol cols="12" md="6">
@@ -869,8 +837,7 @@ onUnmounted(() => {
             <!-- Sécurité -->
             <template v-if="!isEditing">
               <div class="form-section-label mt-2">
-                <VIcon icon="bx-lock-alt" size="16" />
-                Sécurité
+                <VIcon icon="bx-lock-alt" size="16" /> Sécurité
               </div>
               <VTextField
                 v-model="formData.motDePasse"
@@ -886,13 +853,8 @@ onUnmounted(() => {
 
             <VDivider class="mt-4 mb-4" />
 
-            <div class="d-flex justify-end gap-2">
-              <VBtn
-                variant="tonal"
-                color="secondary"
-                :disabled="isSubmitting"
-                @click="showDialog = false"
-              >
+            <div class="d-flex justify-end gap-3">
+              <VBtn variant="tonal" color="secondary" :disabled="isSubmitting" @click="showDialog = false" size="large">
                 Annuler
               </VBtn>
               <VBtn
@@ -900,6 +862,8 @@ onUnmounted(() => {
                 color="primary"
                 :loading="isSubmitting"
                 :disabled="isSubmitting"
+                size="large"
+                prepend-icon="bx-save"
               >
                 {{ isEditing ? 'Enregistrer les modifications' : 'Ajouter l\'utilisateur' }}
               </VBtn>
@@ -909,13 +873,9 @@ onUnmounted(() => {
       </VCard>
     </VDialog>
 
-    <!-- Dialogue de confirmation -->
-    <VDialog
-      v-model="showConfirmDialog"
-      max-width="440"
-      persistent
-    >
-      <VCard>
+    <!-- Confirmation Dialog -->
+    <VDialog v-model="showConfirmDialog" max-width="440" persistent transition="fade-transition">
+      <VCard rounded="lg" class="dialog-card">
         <VCardText class="text-center pt-8">
           <VAvatar
             size="56"
@@ -923,10 +883,7 @@ onUnmounted(() => {
             variant="tonal"
             class="mb-4"
           >
-            <VIcon
-              :icon="confirmAction === 'delete' ? 'bx-trash' : 'bx-pause-circle'"
-              size="28"
-            />
+            <VIcon :icon="confirmAction === 'delete' ? 'bx-trash' : 'bx-pause-circle'" size="28" />
           </VAvatar>
 
           <h6 class="text-h6 mb-1">
@@ -935,33 +892,20 @@ onUnmounted(() => {
 
           <p class="text-medium-emphasis mb-1">
             Vous êtes sur le point de {{ confirmAction === 'delete' ? 'supprimer' : 'désactiver' }} l'utilisateur
-            <strong class="text-high-emphasis">
-              {{ userToConfirm?.prenomUtilisateur }} {{ userToConfirm?.nomUtilisateur }}
-            </strong>.
+            <strong class="text-high-emphasis">{{ userToConfirm?.prenomUtilisateur }} {{ userToConfirm?.nomUtilisateur }}</strong>.
           </p>
 
           <p v-if="confirmAction === 'delete'" class="text-error text-caption d-flex align-center justify-center gap-1">
-            <VIcon icon="bx-error-circle" size="16" />
-            Cette action est irréversible.
+            <VIcon icon="bx-error-circle" size="16" /> Cette action est irréversible.
           </p>
           <p v-else class="text-warning text-caption d-flex align-center justify-center gap-1">
-            <VIcon icon="bx-error-circle" size="16" />
-            L'utilisateur ne pourra plus se connecter.
+            <VIcon icon="bx-error-circle" size="16" /> L'utilisateur ne pourra plus se connecter.
           </p>
         </VCardText>
 
         <VCardActions class="d-flex justify-center gap-2 pa-4 pt-2">
-          <VBtn
-            variant="tonal"
-            color="secondary"
-            @click="showConfirmDialog = false"
-          >
-            Annuler
-          </VBtn>
-          <VBtn
-            :color="confirmAction === 'delete' ? 'error' : 'warning'"
-            @click="executeAction"
-          >
+          <VBtn variant="tonal" color="secondary" @click="showConfirmDialog = false">Annuler</VBtn>
+          <VBtn :color="confirmAction === 'delete' ? 'error' : 'warning'" @click="executeAction">
             {{ confirmAction === 'delete' ? 'Supprimer' : 'Désactiver' }}
           </VBtn>
         </VCardActions>
@@ -975,86 +919,107 @@ onUnmounted(() => {
       :timeout="snackbar.timeout"
       location="top end"
       variant="flat"
+      rounded="lg"
+      class="snackbar-custom"
     >
-      <VIcon
-        :icon="snackbar.color === 'success' ? 'bx-check-circle' : snackbar.color === 'warning' ? 'bx-error-circle' : 'bx-x-circle'"
-        size="24"
-        class="me-2"
-      />
-      {{ snackbar.message }}
-
-      <template #actions>
-        <VBtn
-          variant="text"
-          icon="bx-x"
-          @click="snackbar.show = false"
+      <div class="d-flex align-center">
+        <VIcon
+          :icon="snackbar.color === 'success' ? 'bx-check-circle' : snackbar.color === 'warning' ? 'bx-error-circle' : 'bx-x-circle'"
+          size="24"
+          class="me-2"
         />
+        <span class="font-weight-medium">{{ snackbar.message }}</span>
+      </div>
+      <template #actions>
+        <VBtn variant="text" icon="bx-x" @click="snackbar.show = false" size="small" />
       </template>
     </VSnackbar>
   </VRow>
 </template>
 
 <style scoped>
-.gap-1 { gap: 4px; }
-.gap-2 { gap: 8px; }
-.gap-3 { gap: 12px; }
-.gap-4 { gap: 16px; }
-
-.users-header-card {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+/* ========== STATS CARDS ========== */
+.stat-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  border: 1px solid rgba(0, 0, 0, 0.04);
 }
 
-.stat-pill {
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+.stat-icon {
+  width: 52px;
+  height: 52px;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-width: 68px;
-  padding: 6px 14px;
-  border-radius: 10px;
-  background: rgba(var(--v-theme-primary), 0.08);
+  flex-shrink: 0;
 }
 
-.stat-pill__value {
-  font-size: 1.1rem;
+.bg-primary-light {
+  background-color: rgba(var(--v-theme-primary), 0.10);
+}
+.bg-success-light {
+  background-color: rgba(var(--v-theme-success), 0.10);
+}
+.bg-error-light {
+  background-color: rgba(var(--v-theme-error), 0.10);
+}
+
+/* ========== MAIN CARD ========== */
+.main-card {
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+}
+
+.border-bottom {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+.border-top {
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+/* ========== TABLE ========== */
+.custom-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.custom-table thead th {
+  background: rgba(0, 0, 0, 0.02);
+  padding: 12px 16px;
   font-weight: 600;
-  line-height: 1.2;
-  color: rgb(var(--v-theme-primary));
+  letter-spacing: 0.4px;
+  color: rgba(0, 0, 0, 0.6);
+  border-bottom: 2px solid rgba(0, 0, 0, 0.06);
+  white-space: nowrap;
 }
 
-.stat-pill--success {
-  background: rgba(var(--v-theme-success), 0.08);
-}
-.stat-pill--success .stat-pill__value {
-  color: rgb(var(--v-theme-success));
-}
-
-.stat-pill--error {
-  background: rgba(var(--v-theme-error), 0.08);
-}
-.stat-pill--error .stat-pill__value {
-  color: rgb(var(--v-theme-error));
+.custom-table tbody td {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  vertical-align: middle;
 }
 
-.stat-pill__label {
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: rgba(var(--v-theme-on-surface), 0.6);
+.custom-table tbody tr:last-child td {
+  border-bottom: none;
 }
 
-.users-table :deep(th) {
-  font-size: 0.72rem;
-  letter-spacing: 0.03em;
-  color: rgba(var(--v-theme-on-surface), 0.6);
+.table-row {
+  transition: background-color 0.15s ease;
 }
 
-.users-table__row:hover {
-  background: rgba(var(--v-theme-on-surface), 0.03);
+.table-row:hover {
+  background-color: rgba(var(--v-theme-primary), 0.03);
 }
 
-.dialog-header {
-  padding-bottom: 12px;
+/* ========== DIALOG ========== */
+.dialog-card {
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
 }
 
 .form-section-label {
@@ -1067,5 +1032,52 @@ onUnmounted(() => {
   letter-spacing: 0.04em;
   color: rgba(var(--v-theme-on-surface), 0.55);
   margin-bottom: 12px;
+}
+
+/* ========== SNACKBAR ========== */
+.snackbar-custom {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* ========== RESPONSIVE ========== */
+@media (max-width: 600px) {
+  .stat-card .text-h4 {
+    font-size: 1.5rem;
+  }
+  .stat-icon {
+    width: 40px;
+    height: 40px;
+  }
+  .stat-icon .v-icon {
+    font-size: 20px !important;
+  }
+}
+
+@media (max-width: 960px) {
+  .custom-table thead th {
+    font-size: 0.65rem;
+    padding: 8px 10px;
+  }
+  .custom-table tbody td {
+    padding: 8px 10px;
+    font-size: 0.85rem;
+  }
+}
+
+/* ========== UTILITY ========== */
+.gap-1 {
+  gap: 4px;
+}
+.gap-2 {
+  gap: 8px;
+}
+.gap-3 {
+  gap: 12px;
+}
+.gap-4 {
+  gap: 16px;
+}
+.flex-wrap {
+  flex-wrap: wrap;
 }
 </style>

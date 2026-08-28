@@ -22,6 +22,7 @@ const isSubmitting = ref(false)
 // État du dialogue de confirmation de suppression
 const showDeleteDialog = ref(false)
 const stationToDelete = ref(null)
+const isDeleting = ref(false)
 
 // État du snackbar (notification)
 const snackbar = ref({
@@ -43,12 +44,14 @@ const isAdmin = computed(() => authStore.isAdmin)
 const filteredStations = computed(() => {
   if (!searchQuery.value) return stations.value
   const query = searchQuery.value.toLowerCase()
-  return stations.value.filter(station => 
+  return stations.value.filter(station =>
     station.libelleStation?.toLowerCase().includes(query) ||
     station.adresseStation?.toLowerCase().includes(query) ||
     station.telephoneStation?.toLowerCase().includes(query)
   )
 })
+
+const totalStations = computed(() => stations.value.length)
 
 // Méthodes
 const loadStations = async () => {
@@ -94,6 +97,11 @@ const openEditDialog = (station) => {
   showDialog.value = true
 }
 
+const closeDialog = () => {
+  if (isSubmitting.value) return
+  showDialog.value = false
+}
+
 const validateForm = () => {
   const errors = {}
   if (!formData.value.libelleStation || formData.value.libelleStation.trim() === '') {
@@ -101,31 +109,31 @@ const validateForm = () => {
   } else if (formData.value.libelleStation.length < 3) {
     errors.libelleStation = 'Le libellé doit contenir au moins 3 caractères'
   }
-  
+
   if (!formData.value.adresseStation || formData.value.adresseStation.trim() === '') {
     errors.adresseStation = 'L\'adresse de la station est requise'
   }
-  
+
   if (!formData.value.telephoneStation || formData.value.telephoneStation.trim() === '') {
     errors.telephoneStation = 'Le téléphone de la station est requis'
   }
-  
+
   formErrors.value = errors
   return Object.keys(errors).length === 0
 }
 
 const saveStation = async () => {
   if (!validateForm()) return
-  
+
   isSubmitting.value = true
-  
+
   try {
     const stationData = {
       libelleStation: formData.value.libelleStation.trim(),
       adresseStation: formData.value.adresseStation.trim(),
       telephoneStation: formData.value.telephoneStation.trim()
     }
-    
+
     if (isEditing.value) {
       await stationsStore.updateStation(formData.value.idStation, stationData)
       showNotification('Station modifiée avec succès ! ✅', 'success')
@@ -133,7 +141,7 @@ const saveStation = async () => {
       await stationsStore.createStation(stationData)
       showNotification('Station ajoutée avec succès ! ✅', 'success')
     }
-    
+
     showDialog.value = false
     await loadStations()
   } catch (error) {
@@ -156,7 +164,9 @@ const confirmDelete = (station) => {
 
 const deleteStation = async () => {
   if (!stationToDelete.value) return
-  
+
+  isDeleting.value = true
+
   try {
     await stationsStore.deleteStation(stationToDelete.value.idStation)
     showDeleteDialog.value = false
@@ -170,6 +180,8 @@ const deleteStation = async () => {
     } else {
       showNotification('Erreur lors de la suppression de la station', 'error')
     }
+  } finally {
+    isDeleting.value = false
   }
 }
 
@@ -182,44 +194,68 @@ onMounted(() => {
 <template>
   <VRow>
     <VCol cols="12">
-      <VCard title="Basic">
-        <template #append>
-          <VBtn
-            color="primary"
-            prepend-icon="bx-plus"
-            @click="openCreateDialog"
-          >
-            Ajouter une station
-          </VBtn>
-        </template>
+      <VCard>
+        <VCardItem class="pb-2">
+          <template #prepend>
+            <VAvatar
+              variant="tonal"
+              color="primary"
+              rounded
+              size="42"
+            >
+              <VIcon icon="bx-gas-pump" size="24" />
+            </VAvatar>
+          </template>
+
+          <VCardTitle>Gestion des stations</VCardTitle>
+          <VCardSubtitle>
+            {{ totalStations }} station(s) enregistrée(s)
+          </VCardSubtitle>
+
+          <template #append>
+            <VBtn
+              color="primary"
+              prepend-icon="bx-plus"
+              @click="openCreateDialog"
+            >
+              Ajouter une station
+            </VBtn>
+          </template>
+        </VCardItem>
+
+        <VDivider />
 
         <!-- Barre de recherche -->
-        <div class="pa-4">
+        <VCardText class="d-flex flex-wrap gap-4 py-4">
           <VTextField
             v-model="searchQuery"
             placeholder="Rechercher une station..."
             density="compact"
             prepend-inner-icon="bx-search"
+            style="max-inline-size: 320px;"
             clearable
+            hide-details
           />
-        </div>
+        </VCardText>
 
-        <VTable>
+        <VDivider />
+
+        <VTable class="stations-table">
           <thead>
             <tr>
-              <th class="text-uppercase text-center">
+              <th class="text-uppercase text-center" style="inline-size: 64px;">
                 N°
               </th>
-              <th>
-                Libellé
+              <th class="text-uppercase">
+                Station
               </th>
-              <th>
+              <th class="text-uppercase">
                 Adresse
               </th>
-              <th>
+              <th class="text-uppercase">
                 Téléphone
               </th>
-              <th class="text-center">
+              <th class="text-uppercase text-center" style="inline-size: 120px;">
                 Actions
               </th>
             </tr>
@@ -227,50 +263,86 @@ onMounted(() => {
 
           <tbody>
             <tr v-if="loading">
-              <td colspan="5" class="text-center pa-4">
+              <td colspan="5" class="text-center pa-8">
                 <VProgressCircular indeterminate color="primary" />
               </td>
             </tr>
+
             <tr v-else-if="filteredStations.length === 0">
-              <td colspan="5" class="text-center pa-4 text-medium-emphasis">
-                {{ searchQuery ? 'Aucune station trouvée pour cette recherche' : 'Aucune station trouvée' }}
+              <td colspan="5" class="text-center pa-8">
+                <VIcon
+                  icon="bx-search-alt"
+                  size="40"
+                  color="disabled"
+                  class="mb-2"
+                />
+                <p class="text-medium-emphasis mb-0">
+                  {{ searchQuery ? 'Aucune station trouvée pour cette recherche' : 'Aucune station trouvée' }}
+                </p>
               </td>
             </tr>
+
             <tr
               v-for="(station, index) in filteredStations"
               :key="station.idStation"
             >
-              <td class="text-center">
+              <td class="text-center text-medium-emphasis">
                 {{ index + 1 }}
               </td>
               <td>
-                {{ station.libelleStation }}
+                <div class="d-flex align-center gap-3">
+                  <VAvatar
+                    variant="tonal"
+                    color="primary"
+                    size="34"
+                    rounded
+                  >
+                    <VIcon icon="bx-gas-pump" size="18" />
+                  </VAvatar>
+                  <span class="font-weight-medium">{{ station.libelleStation }}</span>
+                </div>
               </td>
               <td>
-                {{ station.adresseStation }}
+                <div class="d-flex align-center gap-2 text-medium-emphasis">
+                  <VIcon icon="bx-map" size="16" />
+                  <span>{{ station.adresseStation }}</span>
+                </div>
               </td>
               <td>
-                {{ station.telephoneStation }}
+                <div class="d-flex align-center gap-2 text-medium-emphasis">
+                  <VIcon icon="bx-phone" size="16" />
+                  <span>{{ station.telephoneStation }}</span>
+                </div>
               </td>
               <td class="text-center">
-                <VBtn
-                  icon
-                  variant="text"
-                  size="small"
-                  color="primary"
-                  @click="openEditDialog(station)"
-                >
-                  <VIcon size="20" icon="bx-edit" />
-                </VBtn>
-                <VBtn
-                  icon
-                  variant="text"
-                  size="small"
-                  color="error"
-                  @click="confirmDelete(station)"
-                >
-                  <VIcon size="20" icon="bx-trash" />
-                </VBtn>
+                <VTooltip text="Modifier">
+                  <template #activator="{ props }">
+                    <VBtn
+                      v-bind="props"
+                      icon
+                      variant="text"
+                      size="small"
+                      color="primary"
+                      @click="openEditDialog(station)"
+                    >
+                      <VIcon size="20" icon="bx-edit" />
+                    </VBtn>
+                  </template>
+                </VTooltip>
+                <VTooltip text="Supprimer">
+                  <template #activator="{ props }">
+                    <VBtn
+                      v-bind="props"
+                      icon
+                      variant="text"
+                      size="small"
+                      color="error"
+                      @click="confirmDelete(station)"
+                    >
+                      <VIcon size="20" icon="bx-trash" />
+                    </VBtn>
+                  </template>
+                </VTooltip>
               </td>
             </tr>
           </tbody>
@@ -281,68 +353,105 @@ onMounted(() => {
     <!-- Dialogue d'ajout/édition -->
     <VDialog
       v-model="showDialog"
-      max-width="500"
+      max-width="560"
       persistent
     >
       <VCard>
-        <VCardItem>
+        <VCardItem class="pb-2">
+          <template #prepend>
+            <VAvatar
+              variant="tonal"
+              :color="isEditing ? 'primary' : 'success'"
+              rounded
+              size="42"
+            >
+              <VIcon :icon="isEditing ? 'bx-edit' : 'bx-plus'" size="22" />
+            </VAvatar>
+          </template>
+
           <VCardTitle>
             {{ isEditing ? 'Modifier la station' : 'Ajouter une nouvelle station' }}
           </VCardTitle>
           <VCardSubtitle>
             {{ isEditing ? 'Modifiez les informations de la station' : 'Saisissez les informations de la nouvelle station' }}
           </VCardSubtitle>
+
+          <template #append>
+            <VBtn
+              icon
+              variant="text"
+              size="small"
+              :disabled="isSubmitting"
+              @click="closeDialog"
+            >
+              <VIcon icon="bx-x" size="20" />
+            </VBtn>
+          </template>
         </VCardItem>
 
-        <VCardText>
+        <VDivider class="mt-3" />
+
+        <VCardText class="pt-5">
           <VForm @submit.prevent="saveStation">
-            <VTextField
-              v-model="formData.libelleStation"
-              label="Libellé de la station"
-              placeholder="Ex: Station Partenaire Centre"
-              :error-messages="formErrors.libelleStation"
-              :loading="isSubmitting"
-              autofocus
-            />
+            <VRow>
+              <VCol cols="12">
+                <VTextField
+                  v-model="formData.libelleStation"
+                  label="Libellé de la station"
+                  placeholder="Ex: Station Partenaire Centre"
+                  prepend-inner-icon="bx-gas-pump"
+                  :error-messages="formErrors.libelleStation"
+                  :disabled="isSubmitting"
+                  autofocus
+                />
+              </VCol>
 
-            <VTextField
-              v-model="formData.adresseStation"
-              label="Adresse"
-              placeholder="Ex: Avenue du Port"
-              :error-messages="formErrors.adresseStation"
-              :loading="isSubmitting"
-              class="mt-4"
-            />
+              <VCol cols="12">
+                <VTextField
+                  v-model="formData.adresseStation"
+                  label="Adresse"
+                  placeholder="Ex: Avenue du Port"
+                  prepend-inner-icon="bx-map"
+                  :error-messages="formErrors.adresseStation"
+                  :disabled="isSubmitting"
+                />
+              </VCol>
 
-            <VTextField
-              v-model="formData.telephoneStation"
-              label="Téléphone"
-              placeholder="Ex: +243800000001"
-              :error-messages="formErrors.telephoneStation"
-              :loading="isSubmitting"
-              class="mt-4"
-            />
-
-            <div class="d-flex justify-end gap-2 mt-4">
-              <VBtn
-                variant="tonal"
-                color="secondary"
-                @click="showDialog = false"
-                :disabled="isSubmitting"
-              >
-                Annuler
-              </VBtn>
-              <VBtn
-                type="submit"
-                color="primary"
-                :loading="isSubmitting"
-                :disabled="isSubmitting"
-              >
-                {{ isEditing ? 'Modifier' : 'Ajouter' }}
-              </VBtn>
-            </div>
+              <VCol cols="12">
+                <VTextField
+                  v-model="formData.telephoneStation"
+                  label="Téléphone"
+                  placeholder="Ex: +243800000001"
+                  prepend-inner-icon="bx-phone"
+                  :error-messages="formErrors.telephoneStation"
+                  :disabled="isSubmitting"
+                />
+              </VCol>
+            </VRow>
           </VForm>
         </VCardText>
+
+        <VDivider />
+
+        <VCardActions class="pa-4">
+          <VSpacer />
+          <VBtn
+            variant="tonal"
+            color="secondary"
+            :disabled="isSubmitting"
+            @click="closeDialog"
+          >
+            Annuler
+          </VBtn>
+          <VBtn
+            color="primary"
+            :loading="isSubmitting"
+            :disabled="isSubmitting"
+            @click="saveStation"
+          >
+            {{ isEditing ? 'Enregistrer' : 'Ajouter' }}
+          </VBtn>
+        </VCardActions>
       </VCard>
     </VDialog>
 
@@ -353,36 +462,41 @@ onMounted(() => {
       persistent
     >
       <VCard>
-        <VCardItem>
-          <VCardTitle class="text-error">
+        <VCardText class="text-center pt-8 pb-2">
+          <VAvatar
+            variant="tonal"
+            color="error"
+            size="64"
+            class="mb-4"
+          >
+            <VIcon icon="bx-trash" size="30" />
+          </VAvatar>
+          <h5 class="text-h5 mb-2">
             Confirmer la suppression
-          </VCardTitle>
-          <VCardSubtitle>
-            Êtes-vous sûr de vouloir supprimer cette station ?
-          </VCardSubtitle>
-        </VCardItem>
-
-        <VCardText>
-          <p class="text-medium-emphasis">
+          </h5>
+          <p class="text-medium-emphasis mb-0">
             Vous êtes sur le point de supprimer la station
             <strong class="text-high-emphasis">"{{ stationToDelete?.libelleStation }}"</strong>.
           </p>
-          <p class="text-error text-caption">
+          <p class="text-error text-caption mt-4 mb-0">
             <VIcon icon="bx-error-circle" size="16" class="me-1" />
             Cette action est irréversible.
           </p>
         </VCardText>
 
-        <VCardActions class="d-flex justify-end gap-2 pa-4">
+        <VCardActions class="d-flex justify-center gap-2 pa-6 pt-4">
           <VBtn
             variant="tonal"
             color="secondary"
+            :disabled="isDeleting"
             @click="showDeleteDialog = false"
           >
             Annuler
           </VBtn>
           <VBtn
             color="error"
+            :loading="isDeleting"
+            :disabled="isDeleting"
             @click="deleteStation"
           >
             Supprimer
@@ -405,7 +519,7 @@ onMounted(() => {
         class="me-2"
       />
       {{ snackbar.message }}
-      
+
       <template #actions>
         <VBtn
           variant="text"
@@ -420,5 +534,19 @@ onMounted(() => {
 <style scoped>
 .gap-2 {
   gap: 8px;
+}
+.gap-3 {
+  gap: 12px;
+}
+.gap-4 {
+  gap: 16px;
+}
+.stations-table :deep(th) {
+  font-size: 0.75rem;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+.stations-table :deep(tbody tr:hover) {
+  background-color: rgba(var(--v-theme-primary), 0.04);
 }
 </style>

@@ -22,6 +22,7 @@ const isSubmitting = ref(false)
 // État du dialogue de confirmation de suppression
 const showDeleteDialog = ref(false)
 const typeToDelete = ref(null)
+const isDeleting = ref(false)
 
 // État du snackbar (notification)
 const snackbar = ref({
@@ -43,10 +44,12 @@ const isAdmin = computed(() => authStore.isAdmin)
 const filteredTypes = computed(() => {
   if (!searchQuery.value) return types.value
   const query = searchQuery.value.toLowerCase()
-  return types.value.filter(type => 
+  return types.value.filter(type =>
     type.libelleCarburant.toLowerCase().includes(query)
   )
 })
+
+const totalTypes = computed(() => types.value.length)
 
 // Méthodes
 const loadTypes = async () => {
@@ -90,6 +93,11 @@ const openEditDialog = (type) => {
   showDialog.value = true
 }
 
+const closeDialog = () => {
+  if (isSubmitting.value) return
+  showDialog.value = false
+}
+
 const validateForm = () => {
   const errors = {}
   if (!formData.value.libelleCarburant || formData.value.libelleCarburant.trim() === '') {
@@ -97,21 +105,21 @@ const validateForm = () => {
   } else if (formData.value.libelleCarburant.length < 2) {
     errors.libelleCarburant = 'Le libellé doit contenir au moins 2 caractères'
   }
-  
+
   formErrors.value = errors
   return Object.keys(errors).length === 0
 }
 
 const saveType = async () => {
   if (!validateForm()) return
-  
+
   isSubmitting.value = true
-  
+
   try {
     const typeData = {
       libelleCarburant: formData.value.libelleCarburant.trim()
     }
-    
+
     if (isEditing.value) {
       await typeCarburantStore.updateType(formData.value.idCarburant, typeData)
       showNotification('Type de carburant modifié avec succès ! ✅', 'success')
@@ -119,7 +127,7 @@ const saveType = async () => {
       await typeCarburantStore.createType(typeData)
       showNotification('Type de carburant ajouté avec succès ! ✅', 'success')
     }
-    
+
     showDialog.value = false
     await loadTypes()
   } catch (error) {
@@ -142,7 +150,9 @@ const confirmDelete = (type) => {
 
 const deleteType = async () => {
   if (!typeToDelete.value) return
-  
+
+  isDeleting.value = true
+
   try {
     await typeCarburantStore.deleteType(typeToDelete.value.idCarburant)
     showDeleteDialog.value = false
@@ -156,6 +166,8 @@ const deleteType = async () => {
     } else {
       showNotification('Erreur lors de la suppression du type de carburant', 'error')
     }
+  } finally {
+    isDeleting.value = false
   }
 }
 
@@ -168,41 +180,65 @@ onMounted(() => {
 <template>
   <VRow>
     <VCol cols="12">
-      <VCard title="Basic">
-        <template #append>
-          <VBtn
-            color="primary"
-            prepend-icon="bx-plus"
-            @click="openCreateDialog"
-          >
-            Ajouter un type
-          </VBtn>
-        </template>
+      <VCard>
+        <VCardItem class="pb-2">
+          <template #prepend>
+            <VAvatar
+              variant="tonal"
+              color="primary"
+              rounded
+              size="42"
+            >
+              <VIcon icon="bx-droplet" size="24" />
+            </VAvatar>
+          </template>
+
+          <VCardTitle>Types de carburant</VCardTitle>
+          <VCardSubtitle>
+            {{ totalTypes }} type(s) enregistré(s)
+          </VCardSubtitle>
+
+          <template #append>
+            <VBtn
+              color="primary"
+              prepend-icon="bx-plus"
+              @click="openCreateDialog"
+            >
+              Ajouter un type
+            </VBtn>
+          </template>
+        </VCardItem>
+
+        <VDivider />
 
         <!-- Barre de recherche -->
-        <div class="pa-4">
+        <VCardText class="d-flex flex-wrap gap-4 py-4">
           <VTextField
             v-model="searchQuery"
             placeholder="Rechercher un type de carburant..."
             density="compact"
             prepend-inner-icon="bx-search"
+            style="max-inline-size: 320px;"
             clearable
+            hide-details
           />
-        </div>
+        </VCardText>
 
-        <VTable>
+        <VDivider />
+
+        <VTable class="types-table">
           <thead>
             <tr>
-              <th class="text-uppercase text-center">
+              <th class="text-uppercase text-center" style="inline-size: 64px;">
                 N°
               </th>
-              <th>
+              <th class="text-uppercase">
                 Libellé
               </th>
-              <th class="text-center">
+              <th class="text-uppercase text-center">
                 Date d'enregistrement
               </th>
-              <th class="text-center">
+              <th class="text-uppercase text-center" style="inline-size: 120px;">
                 Actions
               </th>
             </tr>
@@ -210,53 +246,88 @@ onMounted(() => {
 
           <tbody>
             <tr v-if="loading">
-              <td colspan="4" class="text-center pa-4">
+              <td colspan="4" class="text-center pa-8">
                 <VProgressCircular indeterminate color="primary" />
               </td>
             </tr>
+
             <tr v-else-if="filteredTypes.length === 0">
-              <td colspan="4" class="text-center pa-4 text-medium-emphasis">
-                {{ searchQuery ? 'Aucun type de carburant trouvé pour cette recherche' : 'Aucun type de carburant trouvé' }}
+              <td colspan="4" class="text-center pa-8">
+                <VIcon
+                  icon="bx-search-alt"
+                  size="40"
+                  color="disabled"
+                  class="mb-2"
+                />
+                <p class="text-medium-emphasis mb-0">
+                  {{ searchQuery ? 'Aucun type de carburant trouvé pour cette recherche' : 'Aucun type de carburant trouvé' }}
+                </p>
               </td>
             </tr>
+
             <tr
               v-for="(type, index) in filteredTypes"
               :key="type.idCarburant"
             >
-              <td class="text-center">
+              <td class="text-center text-medium-emphasis">
                 {{ index + 1 }}
               </td>
               <td>
-                <VChip
-                  color="primary"
-                  size="small"
-                  label
-                >
-                  {{ type.libelleCarburant }}
-                </VChip>
+                <div class="d-flex align-center gap-3">
+                  <VAvatar
+                    variant="tonal"
+                    color="primary"
+                    size="34"
+                    rounded
+                  >
+                    <VIcon icon="bx-droplet" size="18" />
+                  </VAvatar>
+                  <VChip
+                    color="primary"
+                    variant="tonal"
+                    size="small"
+                    label
+                    class="font-weight-medium"
+                  >
+                    {{ type.libelleCarburant }}
+                  </VChip>
+                </div>
               </td>
               <td class="text-center">
-                {{ formatDate(type.dateEnregistrement) }}
+                <div class="d-flex align-center justify-center gap-2 text-medium-emphasis">
+                  <VIcon icon="bx-calendar" size="16" />
+                  <span>{{ formatDate(type.dateEnregistrement) }}</span>
+                </div>
               </td>
               <td class="text-center">
-                <VBtn
-                  icon
-                  variant="text"
-                  size="small"
-                  color="primary"
-                  @click="openEditDialog(type)"
-                >
-                  <VIcon size="20" icon="bx-edit" />
-                </VBtn>
-                <VBtn
-                  icon
-                  variant="text"
-                  size="small"
-                  color="error"
-                  @click="confirmDelete(type)"
-                >
-                  <VIcon size="20" icon="bx-trash" />
-                </VBtn>
+                <VTooltip text="Modifier">
+                  <template #activator="{ props }">
+                    <VBtn
+                      v-bind="props"
+                      icon
+                      variant="text"
+                      size="small"
+                      color="primary"
+                      @click="openEditDialog(type)"
+                    >
+                      <VIcon size="20" icon="bx-edit" />
+                    </VBtn>
+                  </template>
+                </VTooltip>
+                <VTooltip text="Supprimer">
+                  <template #activator="{ props }">
+                    <VBtn
+                      v-bind="props"
+                      icon
+                      variant="text"
+                      size="small"
+                      color="error"
+                      @click="confirmDelete(type)"
+                    >
+                      <VIcon size="20" icon="bx-trash" />
+                    </VBtn>
+                  </template>
+                </VTooltip>
               </td>
             </tr>
           </tbody>
@@ -267,27 +338,53 @@ onMounted(() => {
     <!-- Dialogue d'ajout/édition -->
     <VDialog
       v-model="showDialog"
-      max-width="500"
+      max-width="480"
       persistent
     >
       <VCard>
-        <VCardItem>
+        <VCardItem class="pb-2">
+          <template #prepend>
+            <VAvatar
+              variant="tonal"
+              :color="isEditing ? 'primary' : 'success'"
+              rounded
+              size="42"
+            >
+              <VIcon :icon="isEditing ? 'bx-edit' : 'bx-plus'" size="22" />
+            </VAvatar>
+          </template>
+
           <VCardTitle>
             {{ isEditing ? 'Modifier le type' : 'Ajouter un nouveau type' }}
           </VCardTitle>
           <VCardSubtitle>
             {{ isEditing ? 'Modifiez les informations du type' : 'Saisissez le libellé du nouveau type' }}
           </VCardSubtitle>
+
+          <template #append>
+            <VBtn
+              icon
+              variant="text"
+              size="small"
+              :disabled="isSubmitting"
+              @click="closeDialog"
+            >
+              <VIcon icon="bx-x" size="20" />
+            </VBtn>
+          </template>
         </VCardItem>
 
-        <VCardText>
+        <VDivider class="mt-3" />
+
+        <VCardText class="pt-5">
           <VForm @submit.prevent="saveType">
             <VTextField
               v-model="formData.libelleCarburant"
               label="Libellé du type"
               placeholder="Ex: Essence, Gasoil, Mazout, ..."
+              prepend-inner-icon="bx-droplet"
               :error-messages="formErrors.libelleCarburant"
-              :loading="isSubmitting"
+              :disabled="isSubmitting"
               autofocus
             />
 
@@ -295,35 +392,35 @@ onMounted(() => {
               v-if="isEditing && formData.dateEnregistrement"
               :model-value="formatDateOnly(formData.dateEnregistrement)"
               label="Date d'enregistrement"
+              prepend-inner-icon="bx-calendar"
               readonly
               disabled
               class="mt-4"
-            >
-              <template #prepend-inner>
-                <VIcon icon="bx-calendar" size="20" />
-              </template>
-            </VTextField>
-
-            <div class="d-flex justify-end gap-2 mt-4">
-              <VBtn
-                variant="tonal"
-                color="secondary"
-                @click="showDialog = false"
-                :disabled="isSubmitting"
-              >
-                Annuler
-              </VBtn>
-              <VBtn
-                type="submit"
-                color="primary"
-                :loading="isSubmitting"
-                :disabled="isSubmitting"
-              >
-                {{ isEditing ? 'Modifier' : 'Ajouter' }}
-              </VBtn>
-            </div>
+            />
           </VForm>
         </VCardText>
+
+        <VDivider />
+
+        <VCardActions class="pa-4">
+          <VSpacer />
+          <VBtn
+            variant="tonal"
+            color="secondary"
+            :disabled="isSubmitting"
+            @click="closeDialog"
+          >
+            Annuler
+          </VBtn>
+          <VBtn
+            color="primary"
+            :loading="isSubmitting"
+            :disabled="isSubmitting"
+            @click="saveType"
+          >
+            {{ isEditing ? 'Enregistrer' : 'Ajouter' }}
+          </VBtn>
+        </VCardActions>
       </VCard>
     </VDialog>
 
@@ -334,36 +431,41 @@ onMounted(() => {
       persistent
     >
       <VCard>
-        <VCardItem>
-          <VCardTitle class="text-error">
+        <VCardText class="text-center pt-8 pb-2">
+          <VAvatar
+            variant="tonal"
+            color="error"
+            size="64"
+            class="mb-4"
+          >
+            <VIcon icon="bx-trash" size="30" />
+          </VAvatar>
+          <h5 class="text-h5 mb-2">
             Confirmer la suppression
-          </VCardTitle>
-          <VCardSubtitle>
-            Êtes-vous sûr de vouloir supprimer ce type ?
-          </VCardSubtitle>
-        </VCardItem>
-
-        <VCardText>
-          <p class="text-medium-emphasis">
+          </h5>
+          <p class="text-medium-emphasis mb-0">
             Vous êtes sur le point de supprimer le type
             <strong class="text-high-emphasis">"{{ typeToDelete?.libelleCarburant }}"</strong>.
           </p>
-          <p class="text-error text-caption">
+          <p class="text-error text-caption mt-4 mb-0">
             <VIcon icon="bx-error-circle" size="16" class="me-1" />
             Cette action est irréversible.
           </p>
         </VCardText>
 
-        <VCardActions class="d-flex justify-end gap-2 pa-4">
+        <VCardActions class="d-flex justify-center gap-2 pa-6 pt-4">
           <VBtn
             variant="tonal"
             color="secondary"
+            :disabled="isDeleting"
             @click="showDeleteDialog = false"
           >
             Annuler
           </VBtn>
           <VBtn
             color="error"
+            :loading="isDeleting"
+            :disabled="isDeleting"
             @click="deleteType"
           >
             Supprimer
@@ -386,7 +488,7 @@ onMounted(() => {
         class="me-2"
       />
       {{ snackbar.message }}
-      
+
       <template #actions>
         <VBtn
           variant="text"
@@ -401,5 +503,19 @@ onMounted(() => {
 <style scoped>
 .gap-2 {
   gap: 8px;
+}
+.gap-3 {
+  gap: 12px;
+}
+.gap-4 {
+  gap: 16px;
+}
+.types-table :deep(th) {
+  font-size: 0.75rem;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+.types-table :deep(tbody tr:hover) {
+  background-color: rgba(var(--v-theme-primary), 0.04);
 }
 </style>
