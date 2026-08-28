@@ -5,18 +5,22 @@ import VerticalNavSectionTitle from '@layouts/components/VerticalNavSectionTitle
 </script>
 
 <template>
-  <!--  Dashboard -->
+  <!-- ============================================================ -->
+  <!--  DASHBOARD                                                   -->
+  <!-- ============================================================ -->
   <VerticalNavLink
     :item="{
       title: 'Dashboard',
       icon: 'bx-home-smile',
-      badgeContent: '5',
+      badgeContent: '',
       badgeClass: 'bg-error',
       to: '/dashboard',
     }"
   />
 
-  <!--  Gestion des utilisateurs -->
+  <!-- ============================================================ -->
+  <!--  UTILISATEURS & ADMINISTRATION                                -->
+  <!-- ============================================================ -->
   <VerticalNavSectionTitle
     :item="{
       heading: 'Utilisateurs & Administration',
@@ -53,7 +57,9 @@ import VerticalNavSectionTitle from '@layouts/components/VerticalNavSectionTitle
     />
   </VerticalNavGroup>
 
-  <!--  Paramètres -->
+  <!-- ============================================================ -->
+  <!--  PARAMÈTRES                                                   -->
+  <!-- ============================================================ -->
   <VerticalNavSectionTitle
     :item="{
       heading: 'Paramètres',
@@ -118,7 +124,9 @@ import VerticalNavSectionTitle from '@layouts/components/VerticalNavSectionTitle
     />
   </VerticalNavGroup>
 
-  <!--  Engins -->
+  <!-- ============================================================ -->
+  <!--  ENGINS                                                       -->
+  <!-- ============================================================ -->
   <VerticalNavSectionTitle
     :item="{
       heading: 'Engins',
@@ -140,29 +148,30 @@ import VerticalNavSectionTitle from '@layouts/components/VerticalNavSectionTitle
     />
     <VerticalNavLink
       :item="{
-        title: 'Types d\'engin',
+        title: 'Types d’engin',
         icon: 'bx-cog',
         to: '/types-equipement',
       }"
     />
     <VerticalNavLink
       :item="{
-        title: 'Statuts de l\'engin',
+        title: 'Statuts de l’engin',
         icon: 'bx-check-circle',
         to: '/statuts-equipement',
       }"
     />
     <VerticalNavLink
       :item="{
-        title: 'États de l\'engin',
+        title: 'États de l’engin',
         icon: 'bx-refresh',
         to: '/etats-equipement',
       }"
     />
-    
   </VerticalNavGroup>
 
-  <!--  Demandes & Approvisionnements -->
+  <!-- ============================================================ -->
+  <!--  DEMANDES & APPROVISIONNEMENTS                                -->
+  <!-- ============================================================ -->
   <VerticalNavSectionTitle
     :item="{
       heading: 'Demandes & Approvisionnements',
@@ -171,12 +180,12 @@ import VerticalNavSectionTitle from '@layouts/components/VerticalNavSectionTitle
 
   <VerticalNavGroup
     :item="{
-      title: 'Demandes',
-      icon: 'bx-file',
+      title: 'Gestion des flux',
+      icon: 'bx-transfer',
     }"
   >
-
-  <VerticalNavLink
+    <!-- Les badges ont été retirés pour ces trois entrées -->
+    <VerticalNavLink
       :item="{
         title: 'Affectations',
         icon: 'bx-transfer',
@@ -198,11 +207,61 @@ import VerticalNavSectionTitle from '@layouts/components/VerticalNavSectionTitle
       }"
     />
   </VerticalNavGroup>
-
-  
-  
-
-  
- 
-  
 </template>
+
+<style scoped>
+/* ============================================================
+   Design professionnel pour le menu latéral
+   ============================================================ */
+
+:deep(.v-list-subheader) {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(var(--v-theme-on-surface), 0.4);
+  padding-left: 16px;
+  padding-top: 12px;
+  padding-bottom: 6px;
+}
+
+:deep(.v-list-group__header .v-list-item-title) {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+:deep(.v-list-item__prepend .v-icon) {
+  font-size: 22px;
+  transition: color 0.2s ease;
+}
+
+:deep(.v-list-item--link:hover) {
+  background-color: rgba(var(--v-theme-primary), 0.06) !important;
+}
+:deep(.v-list-item--link:hover .v-icon) {
+  color: rgb(var(--v-theme-primary)) !important;
+}
+
+:deep(.v-badge__badge) {
+  font-size: 0.65rem;
+  padding: 0 6px;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+:deep(.v-list-group__header) {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.bg-error .v-badge__badge {
+  background-color: rgb(var(--v-theme-error)) !important;
+}
+.bg-warning .v-badge__badge {
+  background-color: rgb(var(--v-theme-warning)) !important;
+}
+.bg-info .v-badge__badge {
+  background-color: rgb(var(--v-theme-info)) !important;
+}
+</style>
