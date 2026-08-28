@@ -8,14 +8,14 @@ import { useStatutEquipementStore } from '@/stores/statutEquipement'
 import { useTypeCarburantStore } from '@/stores/typeCarburant'
 import { useAuthStore } from '@/stores/auth'
 
-// Initialisation des stores
+// Stores
 const equipementsStore = useEquipementsStore()
 const typeEquipementStore = useTypeEquipementStore()
 const statutEquipementStore = useStatutEquipementStore()
 const typeCarburantStore = useTypeCarburantStore()
 const authStore = useAuthStore()
 
-// État du dialogue
+// Dialog state
 const showDialog = ref(false)
 const isEditing = ref(false)
 const formData = ref({
@@ -34,11 +34,11 @@ const isSubmitting = ref(false)
 const isExporting = ref(false)
 const photoPreview = ref(null)
 
-// État du dialogue de confirmation de suppression
+// Delete confirmation
 const showDeleteDialog = ref(false)
 const equipementToDelete = ref(null)
 
-// État du snackbar
+// Snackbar
 const snackbar = ref({
   show: false,
   message: '',
@@ -46,31 +46,26 @@ const snackbar = ref({
   timeout: 3000
 })
 
-// Filtres
+// Filters & Pagination
 const searchQuery = ref('')
 const filterType = ref(null)
 const filterStatut = ref(null)
+const currentPage = ref(1)
+const itemsPerPage = ref(10)
 
-// --- Gestion des photos protégées (JWT via Axios) -----------------------
-// Les fichiers uploadés sont derrière Spring Security -> une balise <img>
-// classique ne peut pas envoyer le token. On récupère donc chaque photo
-// via Axios (qui ajoute le Bearer token via l'intercepteur), on la
-// transforme en blob, puis en URL locale utilisable par VAvatar/<img>.
-// Utilisation de `reactive` (au lieu de `ref`) pour une réactivité fiable
-// sur les mutations de Map (set/delete/clear).
+// --- Gestion des photos protégées ---
 const photoUrlCache = reactive(new Map())
+const brokenPhotos = ref(new Set())
 
 const loadAuthenticatedPhoto = async (id, photoPath) => {
   if (!photoPath || photoUrlCache.has(id)) return
-
   try {
     const cleanPath = photoPath.startsWith('/') ? photoPath : `/${photoPath}`
     const response = await axiosIns.get(cleanPath, { responseType: 'blob' })
     const objectUrl = URL.createObjectURL(response.data)
     photoUrlCache.set(id, objectUrl)
-    console.log('✅ Photo protégée chargée pour ID', id)
   } catch (error) {
-    console.error('❌ Impossible de charger la photo protégée pour ID', id, error)
+    console.error('❌ Impossible de charger la photo pour ID', id, error)
     brokenPhotos.value.add(id)
   }
 }
@@ -80,8 +75,6 @@ const revokeAllPhotoUrls = () => {
   photoUrlCache.clear()
 }
 
-// Charge les photos protégées par petits lots successifs (au lieu de tout
-// lancer en parallèle) pour éviter de saturer le backend.
 const loadPhotosInBatches = async (items, batchSize = 3) => {
   for (let i = 0; i < items.length; i += batchSize) {
     const batch = items.slice(i, i + batchSize)
@@ -95,8 +88,6 @@ const loadPhotosInBatches = async (items, batchSize = 3) => {
   }
 }
 
-// Suivi des photos qui échouent au chargement pour basculer sur l'icône par défaut
-const brokenPhotos = ref(new Set())
 const onPhotoError = (id) => {
   console.error('❌ Échec d\'affichage de la photo pour ID', id)
   brokenPhotos.value.add(id)
@@ -107,35 +98,56 @@ const equipements = computed(() => equipementsStore.equipements)
 const types = computed(() => typeEquipementStore.types)
 const statuts = computed(() => statutEquipementStore.statuts)
 const carburants = computed(() => typeCarburantStore.types)
-const loading = computed(() => equipementsStore.loading || typeEquipementStore.loading || statutEquipementStore.loading || typeCarburantStore.loading)
+const loading = computed(() =>
+  equipementsStore.loading ||
+  typeEquipementStore.loading ||
+  statutEquipementStore.loading ||
+  typeCarburantStore.loading
+)
 const isAdmin = computed(() => authStore.isAdmin)
 
-// Options pour les selects
-const typeOptions = computed(() => {
-  return types.value.map(type => ({
+// Stats
+const totalEquipements = computed(() => equipements.value.length)
+const activeEquipements = computed(() =>
+  equipements.value.filter(e =>
+    e.statut?.libelleStatut === 'Actif' || e.statut?.libelleStatut === 'VIP'
+  ).length
+)
+const inactiveEquipements = computed(() =>
+  equipements.value.filter(e =>
+    e.statut?.libelleStatut !== 'Actif' && e.statut?.libelleStatut !== 'VIP'
+  ).length
+)
+const distinctTypesCount = computed(() => {
+  const typeIds = new Set(equipements.value.map(e => e.idTypeEquipement).filter(id => id))
+  return typeIds.size
+})
+
+// Options for selects
+const typeOptions = computed(() =>
+  types.value.map(type => ({
     title: type.libelleTypeEquipement,
     value: type.idTypeEquipement
   }))
-})
+)
 
-const statutOptions = computed(() => {
-  return statuts.value.map(statut => ({
+const statutOptions = computed(() =>
+  statuts.value.map(statut => ({
     title: statut.libelleStatut,
     value: statut.idStatut
   }))
-})
+)
 
-const carburantOptions = computed(() => {
-  return carburants.value.map(carburant => ({
+const carburantOptions = computed(() =>
+  carburants.value.map(carburant => ({
     title: carburant.libelleCarburant,
     value: carburant.idCarburant
   }))
-})
+)
 
-// Filtrer les équipements
+// Filtering & Pagination
 const filteredEquipements = computed(() => {
   let result = equipements.value
-
   if (searchQuery.value) {
     const query = searchQuery.value.toLowerCase()
     result = result.filter(e =>
@@ -144,21 +156,27 @@ const filteredEquipements = computed(() => {
       e.modeleEquipement?.toLowerCase().includes(query)
     )
   }
-
   if (filterType.value) {
     result = result.filter(e => e.idTypeEquipement === filterType.value)
   }
-
   if (filterStatut.value) {
     result = result.filter(e => e.idStatut === filterStatut.value)
   }
-
   return result
 })
 
-// Méthodes
+const totalPages = computed(() =>
+  Math.ceil(filteredEquipements.value.length / itemsPerPage.value)
+)
+
+const paginatedEquipements = computed(() => {
+  const start = (currentPage.value - 1) * itemsPerPage.value
+  const end = start + itemsPerPage.value
+  return filteredEquipements.value.slice(start, end)
+})
+
+// Methods
 const loadData = async () => {
-  console.log('🔄 Chargement des données...')
   try {
     await Promise.all([
       equipementsStore.fetchEquipements(),
@@ -166,60 +184,42 @@ const loadData = async () => {
       statutEquipementStore.fetchStatuts(),
       typeCarburantStore.fetchTypes()
     ])
-
-    console.log('✅ Données chargées avec succès')
-
-    // Charger les photos protégées par lots
     await loadPhotosInBatches(equipementsStore.equipements, 3)
-
   } catch (error) {
-    console.error('❌ Erreur lors du chargement des données:', error)
+    console.error('❌ Erreur lors du chargement:', error)
     showNotification('Erreur lors du chargement des données', 'error')
   }
 }
 
 const showNotification = (message, color = 'success') => {
-  snackbar.value = {
-    show: true,
-    message,
-    color,
-    timeout: 3000
-  }
+  snackbar.value = { show: true, message, color, timeout: 3000 }
 }
 
-// -----------------------------------------------------------------------
-// Export Excel (ExcelJS)
-// -----------------------------------------------------------------------
+// Export Excel
 const exportToExcel = async () => {
   if (isExporting.value) return
   isExporting.value = true
-
   try {
     const dataSource = filteredEquipements.value || []
-
     const workbook = new ExcelJS.Workbook()
     workbook.creator = 'SI GESCAR'
     workbook.created = new Date()
-
     const worksheet = workbook.addWorksheet('Parc équipements', {
       views: [{ state: 'frozen', ySplit: 5, showGridLines: false }],
       pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 }
     })
-
     const NAVY = 'FF0B2545'
     const AMBER = 'FFE8A33D'
     const LIGHT = 'FFF4F7FB'
     const BORDER = 'FFD9E2EC'
 
-    const headers = [
-      'N°', 'Immatriculation', 'Marque', 'Modèle', 'Type', 'Carburant', 'Statut'
-    ]
-
+    const headers = ['N°', 'Immatriculation', 'Marque', 'Modèle', 'Type', 'Carburant', 'Statut']
     worksheet.columns = [
       { width: 6 }, { width: 20 }, { width: 18 }, { width: 20 },
       { width: 20 }, { width: 16 }, { width: 16 }
     ]
 
+    // Title
     worksheet.mergeCells('A1:G1')
     const titleCell = worksheet.getCell('A1')
     titleCell.value = "MINISTÈRE DES FINANCES, DU BUDGET ET DE L'ÉCONOMIE NUMÉRIQUE"
@@ -273,7 +273,6 @@ const exportToExcel = async () => {
         e.statut?.libelleStatut || '-'
       ]
       row.height = 20
-
       row.eachCell((cell, colNumber) => {
         cell.border = {
           top: { style: 'thin', color: { argb: BORDER } },
@@ -287,15 +286,12 @@ const exportToExcel = async () => {
         }
         cell.font = { size: 10, color: { argb: 'FF1E293B' } }
       })
-
       if (i % 2 === 1) {
         row.eachCell(cell => {
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: LIGHT } }
         })
       }
-
       row.getCell(2).font = { ...row.getCell(2).font, bold: true }
-
       const statutLibelle = e.statut?.libelleStatut
       const isActif = statutLibelle === 'Actif' || statutLibelle === 'VIP'
       row.getCell(7).font = {
@@ -306,7 +302,6 @@ const exportToExcel = async () => {
     })
 
     const lastDataRow = headerRowIndex + dataSource.length
-
     if (dataSource.length > 0) {
       worksheet.autoFilter = {
         from: { row: headerRowIndex, column: 1 },
@@ -325,7 +320,6 @@ const exportToExcel = async () => {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     })
     const fileName = `parc_equipements_${new Date().toISOString().slice(0, 10)}.xlsx`
-
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -334,7 +328,6 @@ const exportToExcel = async () => {
     link.click()
     document.body.removeChild(link)
     URL.revokeObjectURL(url)
-
     showNotification('Export Excel généré avec succès ✅', 'success')
   } catch (error) {
     console.error('Erreur export Excel:', error)
@@ -375,9 +368,6 @@ const openEditDialog = (equipement) => {
     photoEquipement: equipement.photoEquipement || null,
     photoFile: null
   }
-
-  // Prévisualisation de la photo existante : on réutilise le cache si déjà
-  // chargé, sinon on va la chercher
   if (equipement.photoEquipement) {
     const cached = photoUrlCache.get(equipement.idEquipement)
     if (cached) {
@@ -392,14 +382,12 @@ const openEditDialog = (equipement) => {
   } else {
     photoPreview.value = null
   }
-
   formErrors.value = {}
   showDialog.value = true
 }
 
 const onFileChange = (event) => {
   const file = event.target.files[0]
-
   if (file) {
     if (!file.type.startsWith('image/')) {
       showNotification('Veuillez sélectionner une image', 'error')
@@ -411,9 +399,7 @@ const onFileChange = (event) => {
     }
     formData.value.photoFile = file
     const reader = new FileReader()
-    reader.onload = (e) => {
-      photoPreview.value = e.target.result
-    }
+    reader.onload = (e) => { photoPreview.value = e.target.result }
     reader.readAsDataURL(file)
   }
 }
@@ -422,47 +408,36 @@ const removePhoto = () => {
   formData.value.photoFile = null
   photoPreview.value = null
   const fileInput = document.getElementById('photoInput')
-  if (fileInput) {
-    fileInput.value = ''
-  }
+  if (fileInput) fileInput.value = ''
 }
 
 const validateForm = () => {
   const errors = {}
-
-  if (!formData.value.immatriculationEquipement || formData.value.immatriculationEquipement.trim() === '') {
+  if (!formData.value.immatriculationEquipement?.trim()) {
     errors.immatriculationEquipement = 'L\'immatriculation est requise'
   }
-
-  if (!formData.value.marqueEquipement || formData.value.marqueEquipement.trim() === '') {
+  if (!formData.value.marqueEquipement?.trim()) {
     errors.marqueEquipement = 'La marque est requise'
   }
-
-  if (!formData.value.modeleEquipement || formData.value.modeleEquipement.trim() === '') {
+  if (!formData.value.modeleEquipement?.trim()) {
     errors.modeleEquipement = 'Le modèle est requis'
   }
-
   if (!formData.value.idTypeEquipement) {
     errors.idTypeEquipement = 'Le type d\'équipement est requis'
   }
-
   if (!formData.value.idStatut) {
     errors.idStatut = 'Le statut est requis'
   }
-
   if (!formData.value.idCarburant) {
     errors.idCarburant = 'Le carburant est requis'
   }
-
   formErrors.value = errors
   return Object.keys(errors).length === 0
 }
 
 const saveEquipement = async () => {
   if (!validateForm()) return
-
   isSubmitting.value = true
-
   try {
     let photoPath = null
     if (formData.value.photoFile) {
@@ -471,7 +446,6 @@ const saveEquipement = async () => {
       const photoResponse = await equipementsStore.uploadPhoto(formDataPhoto)
       photoPath = photoResponse?.photoEquipement
     }
-
     const equipementData = {
       immatriculationEquipement: formData.value.immatriculationEquipement.trim(),
       marqueEquipement: formData.value.marqueEquipement.trim(),
@@ -480,15 +454,12 @@ const saveEquipement = async () => {
       idStatut: formData.value.idStatut,
       idCarburant: formData.value.idCarburant
     }
-
     if (photoPath) {
       equipementData.photoEquipement = photoPath
     } else if (isEditing.value && formData.value.photoEquipement) {
       equipementData.photoEquipement = formData.value.photoEquipement
     }
-
     let savedId = formData.value.idEquipement
-
     if (!isEditing.value) {
       const response = await equipementsStore.createEquipement(equipementData)
       savedId = response.idEquipement
@@ -497,16 +468,12 @@ const saveEquipement = async () => {
       await equipementsStore.updateEquipement(formData.value.idEquipement, equipementData)
       showNotification('Équipement modifié avec succès ! ✅', 'success')
     }
-
-    // Si une nouvelle photo a été uploadée, on invalide l'ancienne entrée
-    // du cache pour forcer un rechargement de la bonne image
     if (photoPath && savedId) {
       const oldUrl = photoUrlCache.get(savedId)
       if (oldUrl) URL.revokeObjectURL(oldUrl)
       photoUrlCache.delete(savedId)
       brokenPhotos.value.delete(savedId)
     }
-
     showDialog.value = false
     await loadData()
   } catch (error) {
@@ -529,22 +496,18 @@ const confirmDelete = (equipement) => {
 
 const deleteEquipement = async () => {
   if (!equipementToDelete.value) return
-
   try {
     await equipementsStore.deleteEquipement(equipementToDelete.value.idEquipement)
-
-    // Nettoyage du cache pour l'équipement supprimé
     const url = photoUrlCache.get(equipementToDelete.value.idEquipement)
     if (url) URL.revokeObjectURL(url)
     photoUrlCache.delete(equipementToDelete.value.idEquipement)
-
     showDeleteDialog.value = false
-    showNotification(`Équipement "${equipementToDelete.value.immatriculationEquipement}" supprimé avec succès ! 🗑️`, 'success')
+    showNotification(`Équipement "${equipementToDelete.value.immatriculationEquipement}" supprimé ! 🗑️`, 'success')
     equipementToDelete.value = null
     await loadData()
   } catch (error) {
     console.error('❌ Erreur lors de la suppression:', error)
-    showNotification('Erreur lors de la suppression de l\'équipement', 'error')
+    showNotification('Erreur lors de la suppression', 'error')
   }
 }
 
@@ -552,14 +515,17 @@ const resetFilters = () => {
   searchQuery.value = ''
   filterType.value = null
   filterStatut.value = null
+  currentPage.value = 1
 }
 
-// Charger les données au montage
+const changePage = (page) => {
+  currentPage.value = page
+}
+
+// Lifecycle
 onMounted(() => {
   loadData()
 })
-
-// Libérer la mémoire des Object URLs au démontage du composant
 onUnmounted(() => {
   revokeAllPhotoUrls()
 })
@@ -568,40 +534,140 @@ onUnmounted(() => {
 <template>
   <VRow>
     <VCol cols="12">
-      <VCard title="Gestion du parc d'équipements">
-        <template #append>
-          <div class="d-flex gap-2">
-            <VBtn
-              color="success"
-              variant="tonal"
-              prepend-icon="bx-file"
-              :loading="isExporting"
-              :disabled="isExporting || filteredEquipements.length === 0"
-              @click="exportToExcel"
-            >
-              Exporter Excel
-            </VBtn>
-            <VBtn
-              color="primary"
-              prepend-icon="bx-plus"
-              @click="openCreateDialog"
-            >
-              Ajouter un équipement
-            </VBtn>
-          </div>
-        </template>
+      <!-- Page Header -->
+      <div class="d-flex align-center justify-space-between mb-6 flex-wrap gap-4">
+        <div>
+          <h1 class="text-h4 font-weight-bold text-primary">Gestion du parc d'équipements</h1>
+          <p class="text-medium-emphasis text-subtitle-1 mt-1">
+            Gérez l'ensemble des véhicules et équipements roulants
+          </p>
+        </div>
+        <div class="d-flex gap-3">
+          <VBtn
+            color="success"
+            variant="tonal"
+            prepend-icon="bx-file"
+            :loading="isExporting"
+            :disabled="isExporting || filteredEquipements.length === 0"
+            @click="exportToExcel"
+          >
+            Exporter Excel
+          </VBtn>
+          <VBtn
+            color="primary"
+            size="large"
+            prepend-icon="bx-plus"
+            @click="openCreateDialog"
+            elevation="2"
+          >
+            Ajouter un équipement
+          </VBtn>
+        </div>
+      </div>
 
-        <!-- Filtres -->
-        <VCardText>
+      <!-- Stats Cards -->
+      <VRow class="mb-6">
+        <VCol cols="12" sm="6" md="3">
+          <VCard variant="tonal" color="primary" class="stat-card" rounded="lg">
+            <VCardText class="d-flex align-center pa-4">
+              <div class="stat-icon rounded-circle bg-primary-light pa-3 me-4">
+                <VIcon icon="bx-car" size="28" color="primary" />
+              </div>
+              <div>
+                <div class="text-caption text-uppercase font-weight-medium text-medium-emphasis">
+                  Total équipements
+                </div>
+                <div class="text-h4 font-weight-bold">{{ totalEquipements }}</div>
+              </div>
+            </VCardText>
+          </VCard>
+        </VCol>
+
+        <VCol cols="12" sm="6" md="3">
+          <VCard variant="tonal" color="success" class="stat-card" rounded="lg">
+            <VCardText class="d-flex align-center pa-4">
+              <div class="stat-icon rounded-circle bg-success-light pa-3 me-4">
+                <VIcon icon="bx-check-circle" size="28" color="success" />
+              </div>
+              <div>
+                <div class="text-caption text-uppercase font-weight-medium text-medium-emphasis">
+                  VIP
+                </div>
+                <div class="text-h4 font-weight-bold">{{ activeEquipements }}</div>
+              </div>
+            </VCardText>
+          </VCard>
+        </VCol>
+
+        <VCol cols="12" sm="6" md="3">
+          <VCard variant="tonal" color="error" class="stat-card" rounded="lg">
+            <VCardText class="d-flex align-center pa-4">
+              <div class="stat-icon rounded-circle bg-error-light pa-3 me-4">
+                <VIcon icon="bx-x-circle" size="28" color="error" />
+              </div>
+              <div>
+                <div class="text-caption text-uppercase font-weight-medium text-medium-emphasis">
+                  Ordinaire
+                </div>
+                <div class="text-h4 font-weight-bold">{{ inactiveEquipements }}</div>
+              </div>
+            </VCardText>
+          </VCard>
+        </VCol>
+
+        <VCol cols="12" sm="6" md="3">
+          <VCard variant="tonal" color="info" class="stat-card" rounded="lg">
+            <VCardText class="d-flex align-center pa-4">
+              <div class="stat-icon rounded-circle bg-info-light pa-3 me-4">
+                <VIcon icon="bx-category" size="28" color="info" />
+              </div>
+              <div>
+                <div class="text-caption text-uppercase font-weight-medium text-medium-emphasis">
+                  Types distincts
+                </div>
+                <div class="text-h4 font-weight-bold">{{ distinctTypesCount }}</div>
+              </div>
+            </VCardText>
+          </VCard>
+        </VCol>
+      </VRow>
+
+      <!-- Main Card -->
+      <VCard rounded="lg" elevation="0" class="main-card">
+        <VCardItem class="border-bottom">
+          <div class="d-flex align-center justify-space-between flex-wrap gap-3 w-100">
+            <VCardTitle class="text-h6 font-weight-semibold">
+              Liste des équipements
+              <VChip size="small" color="primary" variant="tonal" class="ms-2">
+                {{ filteredEquipements.length }}
+              </VChip>
+            </VCardTitle>
+            <div class="d-flex align-center gap-2">
+              <VBtn
+                variant="text"
+                icon="bx-refresh"
+                size="small"
+                @click="loadData"
+                :loading="loading"
+              />
+            </div>
+          </div>
+        </VCardItem>
+
+        <!-- Filters -->
+        <VCardText class="pt-4 pb-2">
           <VRow>
             <VCol cols="12" md="3">
               <VTextField
                 v-model="searchQuery"
-                label="Rechercher..."
-                placeholder="Immatriculation, marque..."
-                density="compact"
+                label="Rechercher"
+                placeholder="Immatriculation, marque…"
+                density="comfortable"
+                variant="outlined"
                 prepend-inner-icon="bx-search"
                 clearable
+                hide-details
+                @update:model-value="currentPage = 1"
               />
             </VCol>
             <VCol cols="12" md="3">
@@ -613,7 +679,10 @@ onUnmounted(() => {
                 item-value="value"
                 placeholder="Tous les types"
                 clearable
-                density="compact"
+                density="comfortable"
+                variant="outlined"
+                hide-details
+                @update:model-value="currentPage = 1"
               />
             </VCol>
             <VCol cols="12" md="3">
@@ -625,14 +694,20 @@ onUnmounted(() => {
                 item-value="value"
                 placeholder="Tous les statuts"
                 clearable
-                density="compact"
+                density="comfortable"
+                variant="outlined"
+                hide-details
+                @update:model-value="currentPage = 1"
               />
             </VCol>
-            <VCol cols="12" md="auto">
+            <VCol cols="12" md="3" class="d-flex align-center gap-2">
               <VBtn
                 color="secondary"
                 variant="tonal"
+                prepend-icon="bx-undo"
                 @click="resetFilters"
+                :disabled="!searchQuery && !filterType && !filterStatut"
+                class="flex-grow-1"
               >
                 Réinitialiser
               </VBtn>
@@ -640,151 +715,197 @@ onUnmounted(() => {
           </VRow>
         </VCardText>
 
-        <!-- Tableau des équipements -->
-        <VTable>
+        <!-- Table -->
+        <VTable class="custom-table">
           <thead>
             <tr>
-              <th class="text-uppercase text-center">N°</th>
-              <th>Photo</th>
-              <th>Immatriculation</th>
-              <th>Marque</th>
-              <th>Modèle</th>
-              <th>Type</th>
-              <th>Carburant</th>
-              <th>Statut</th>
-              <th class="text-center">Actions</th>
+              <th class="text-uppercase text-center text-caption font-weight-bold" style="width: 60px;">N°</th>
+              <th class="text-uppercase text-caption font-weight-bold" style="width: 80px;">Photo</th>
+              <th class="text-uppercase text-caption font-weight-bold">Immatriculation</th>
+              <th class="text-uppercase text-caption font-weight-bold">Marque</th>
+              <th class="text-uppercase text-caption font-weight-bold">Modèle</th>
+              <th class="text-uppercase text-caption font-weight-bold">Type</th>
+              <th class="text-uppercase text-caption font-weight-bold">Carburant</th>
+              <th class="text-uppercase text-caption font-weight-bold text-center">Statut</th>
+              <th class="text-uppercase text-caption font-weight-bold text-center" style="width: 140px;">Actions</th>
             </tr>
           </thead>
-
           <tbody>
             <tr v-if="loading">
-              <td colspan="9" class="text-center pa-4">
-                <VProgressCircular indeterminate color="primary" />
-                <div class="mt-2 text-caption">Chargement...</div>
+              <td colspan="9" class="text-center pa-6">
+                <VProgressCircular indeterminate color="primary" size="40" />
+                <div class="text-caption text-medium-emphasis mt-2">Chargement des équipements…</div>
               </td>
             </tr>
             <tr v-else-if="filteredEquipements.length === 0">
-              <td colspan="9" class="text-center pa-4 text-medium-emphasis">
-                Aucun équipement trouvé
+              <td colspan="9" class="text-center pa-8">
+                <VIcon icon="bx-car" size="48" color="grey-lighten-1" />
+                <div class="text-h6 font-weight-medium mt-2 text-medium-emphasis">
+                  {{ searchQuery || filterType || filterStatut ? 'Aucun équipement trouvé' : 'Aucun équipement enregistré' }}
+                </div>
+                <p class="text-caption text-medium-emphasis">
+                  {{ searchQuery || filterType || filterStatut ? 'Ajustez vos filtres' : 'Ajoutez un nouvel équipement' }}
+                </p>
               </td>
             </tr>
             <tr
-              v-for="(equipement, index) in filteredEquipements"
+              v-for="(equipement, index) in paginatedEquipements"
               :key="equipement.idEquipement"
+              class="table-row"
             >
-              <td class="text-center">
-                {{ index + 1 }}
+              <td class="text-center font-weight-medium text-caption">
+                {{ (currentPage - 1) * itemsPerPage + index + 1 }}
               </td>
               <td>
-  <VAvatar
-    size="64"
-    :color="(!photoUrlCache.get(equipement.idEquipement) || brokenPhotos.has(equipement.idEquipement)) ? 'primary' : undefined"
-    :variant="(!photoUrlCache.get(equipement.idEquipement) || brokenPhotos.has(equipement.idEquipement)) ? 'tonal' : undefined"
-  >
-    <VImg
-      v-if="photoUrlCache.get(equipement.idEquipement) && !brokenPhotos.has(equipement.idEquipement)"
-      :src="photoUrlCache.get(equipement.idEquipement)"
-      cover
-      @error="onPhotoError(equipement.idEquipement)"
-    />
-    <VIcon v-else icon="bx-image" size="32" />
-  </VAvatar>
-</td>
-              <td>
-                <div class="font-weight-medium">
-                  {{ equipement.immatriculationEquipement }}
-                </div>
+                <VAvatar
+                  size="48"
+                  :color="(!photoUrlCache.get(equipement.idEquipement) || brokenPhotos.has(equipement.idEquipement)) ? 'primary' : undefined"
+                  :variant="(!photoUrlCache.get(equipement.idEquipement) || brokenPhotos.has(equipement.idEquipement)) ? 'tonal' : undefined"
+                  rounded
+                >
+                  <VImg
+                    v-if="photoUrlCache.get(equipement.idEquipement) && !brokenPhotos.has(equipement.idEquipement)"
+                    :src="photoUrlCache.get(equipement.idEquipement)"
+                    cover
+                    @error="onPhotoError(equipement.idEquipement)"
+                  />
+                  <VIcon v-else icon="bx-image" size="24" />
+                </VAvatar>
               </td>
               <td>
-                {{ equipement.marqueEquipement || '-' }}
+                <div class="font-weight-medium">{{ equipement.immatriculationEquipement }}</div>
               </td>
+              <td>{{ equipement.marqueEquipement || '-' }}</td>
+              <td>{{ equipement.modeleEquipement || '-' }}</td>
               <td>
-                {{ equipement.modeleEquipement || '-' }}
-              </td>
-              <td>
-                <VChip size="small" label color="primary">
+                <VChip size="small" label color="primary" variant="tonal">
                   {{ equipement.typeEquipement?.libelleTypeEquipement || '-' }}
                 </VChip>
               </td>
               <td>
-                <VChip size="small" label color="info">
+                <VChip size="small" label color="info" variant="tonal">
                   {{ equipement.carburant?.libelleCarburant || '-' }}
                 </VChip>
               </td>
-              <td>
+              <td class="text-center">
                 <VChip
                   size="small"
                   label
                   :color="equipement.statut?.libelleStatut === 'Actif' || equipement.statut?.libelleStatut === 'VIP' ? 'success' : 'error'"
+                  variant="tonal"
                 >
+                  <VIcon
+                    :icon="equipement.statut?.libelleStatut === 'Actif' || equipement.statut?.libelleStatut === 'VIP' ? 'bx-check-circle' : 'bx-x-circle'"
+                    size="14"
+                    start
+                  />
                   {{ equipement.statut?.libelleStatut || '-' }}
                 </VChip>
               </td>
               <td class="text-center">
-                <VBtn
-                  icon
-                  variant="text"
-                  size="small"
-                  color="primary"
-                  @click="openEditDialog(equipement)"
-                >
-                  <VIcon size="20" icon="bx-edit" />
-                </VBtn>
-                <VBtn
-                  icon
-                  variant="text"
-                  size="small"
-                  color="error"
-                  @click="confirmDelete(equipement)"
-                >
-                  <VIcon size="20" icon="bx-trash" />
-                </VBtn>
+                <div class="d-flex justify-center gap-1">
+                  <VTooltip text="Modifier">
+                    <template #activator="{ props }">
+                      <VBtn
+                        v-bind="props"
+                        icon
+                        variant="text"
+                        size="small"
+                        color="primary"
+                        @click="openEditDialog(equipement)"
+                      >
+                        <VIcon size="20" icon="bx-edit" />
+                      </VBtn>
+                    </template>
+                  </VTooltip>
+                  <VTooltip text="Supprimer">
+                    <template #activator="{ props }">
+                      <VBtn
+                        v-bind="props"
+                        icon
+                        variant="text"
+                        size="small"
+                        color="error"
+                        @click="confirmDelete(equipement)"
+                      >
+                        <VIcon size="20" icon="bx-trash" />
+                      </VBtn>
+                    </template>
+                  </VTooltip>
+                </div>
               </td>
             </tr>
           </tbody>
         </VTable>
+
+        <!-- Pagination -->
+        <div
+          class="px-4 py-3 d-flex justify-space-between align-center border-top"
+          v-if="filteredEquipements.length > 0"
+        >
+          <span class="text-caption text-medium-emphasis">
+            {{ filteredEquipements.length }} équipement(s) — Page {{ currentPage }} / {{ totalPages || 1 }}
+          </span>
+          <VPagination
+            v-model="currentPage"
+            :length="totalPages || 1"
+            :total-visible="5"
+            @update:model-value="changePage"
+            color="primary"
+            variant="tonal"
+            size="small"
+          />
+        </div>
       </VCard>
     </VCol>
 
-    <!-- Dialogue d'ajout/édition -->
+    <!-- Dialog: Créer / Modifier -->
     <VDialog
       v-model="showDialog"
-      max-width="600"
+      max-width="620"
       persistent
+      transition="fade-transition"
     >
-      <VCard>
-        <VCardItem>
-          <VCardTitle>
+      <VCard rounded="lg" class="dialog-card">
+        <VCardItem class="border-bottom">
+          <VCardTitle class="d-flex align-center gap-2 text-h6 font-weight-bold">
+            <VIcon
+              :icon="isEditing ? 'bx-edit' : 'bx-plus-circle'"
+              color="primary"
+              size="28"
+            />
             {{ isEditing ? 'Modifier l\'équipement' : 'Ajouter un équipement' }}
           </VCardTitle>
-          <VCardSubtitle>
+          <VCardSubtitle class="mt-1 text-medium-emphasis">
             {{ isEditing ? 'Modifiez les informations de l\'équipement' : 'Saisissez les informations du nouvel équipement' }}
           </VCardSubtitle>
         </VCardItem>
 
-        <VCardText>
+        <VCardText class="pt-6">
           <VForm @submit.prevent="saveEquipement">
-            <!-- Photo de l'équipement -->
-            <div class="d-flex align-center mb-4">
+            <!-- Photo -->
+            <div class="d-flex align-center mb-6">
               <VAvatar
-  size="80"
-  :color="!photoPreview ? 'primary' : undefined"
-  :variant="!photoPreview ? 'tonal' : undefined"
-  class="me-4"
->
-  <VImg v-if="photoPreview" :src="photoPreview" cover />
-  <VIcon v-else icon="bx-image" size="40" />
-</VAvatar>
+                size="80"
+                :color="!photoPreview ? 'primary' : undefined"
+                :variant="!photoPreview ? 'tonal' : undefined"
+                class="me-4"
+              >
+                <VImg v-if="photoPreview" :src="photoPreview" cover />
+                <VIcon v-else icon="bx-image" size="40" />
+              </VAvatar>
               <div>
-                <div class="text-caption text-medium-emphasis">Photo de l'équipement</div>
-                <div class="d-flex gap-2 mt-1">
+                <div class="text-caption text-medium-emphasis text-uppercase font-weight-medium">
+                  Photo de l'équipement
+                </div>
+                <div class="d-flex gap-2 mt-2">
                   <VBtn
                     size="small"
                     variant="tonal"
                     color="primary"
+                    prepend-icon="bx-upload"
                     @click="$refs.fileInput.click()"
                   >
-                    <VIcon icon="bx-upload" size="16" class="me-1" />
                     Choisir
                   </VBtn>
                   <VBtn
@@ -792,9 +913,9 @@ onUnmounted(() => {
                     size="small"
                     variant="tonal"
                     color="error"
+                    prepend-icon="bx-trash"
                     @click="removePhoto"
                   >
-                    <VIcon icon="bx-trash" size="16" class="me-1" />
                     Supprimer
                   </VBtn>
                 </div>
@@ -806,9 +927,7 @@ onUnmounted(() => {
                   class="d-none"
                   @change="onFileChange"
                 />
-                <div class="text-caption text-medium-emphasis mt-1">
-                  JPG, PNG ou GIF (max 5MB)
-                </div>
+                <div class="text-caption text-medium-emphasis mt-1">JPG, PNG ou GIF (max 5MB)</div>
               </div>
             </div>
 
@@ -818,9 +937,12 @@ onUnmounted(() => {
                   v-model="formData.immatriculationEquipement"
                   label="Immatriculation"
                   placeholder="Ex: E1327A"
+                  variant="outlined"
+                  density="comfortable"
                   :error-messages="formErrors.immatriculationEquipement"
-                  :loading="isSubmitting"
+                  :disabled="isSubmitting"
                   autofocus
+                  hide-details="auto"
                 />
               </VCol>
               <VCol cols="12" md="6">
@@ -828,8 +950,11 @@ onUnmounted(() => {
                   v-model="formData.marqueEquipement"
                   label="Marque"
                   placeholder="Ex: Toyota"
+                  variant="outlined"
+                  density="comfortable"
                   :error-messages="formErrors.marqueEquipement"
-                  :loading="isSubmitting"
+                  :disabled="isSubmitting"
+                  hide-details="auto"
                 />
               </VCol>
             </VRow>
@@ -837,9 +962,12 @@ onUnmounted(() => {
             <VTextField
               v-model="formData.modeleEquipement"
               label="Modèle"
-              placeholder="Ex: Land Cruise"
+              placeholder="Ex: Land Cruiser"
+              variant="outlined"
+              density="comfortable"
               :error-messages="formErrors.modeleEquipement"
-              :loading="isSubmitting"
+              :disabled="isSubmitting"
+              hide-details="auto"
               class="mt-4"
             />
 
@@ -850,8 +978,11 @@ onUnmounted(() => {
               item-title="title"
               item-value="value"
               placeholder="Sélectionner un type"
+              variant="outlined"
+              density="comfortable"
               :error-messages="formErrors.idTypeEquipement"
               :loading="loading"
+              hide-details="auto"
               class="mt-4"
             />
 
@@ -862,8 +993,11 @@ onUnmounted(() => {
               item-title="title"
               item-value="value"
               placeholder="Sélectionner un carburant"
+              variant="outlined"
+              density="comfortable"
               :error-messages="formErrors.idCarburant"
               :loading="loading"
+              hide-details="auto"
               class="mt-4"
             />
 
@@ -874,17 +1008,23 @@ onUnmounted(() => {
               item-title="title"
               item-value="value"
               placeholder="Sélectionner un statut"
+              variant="outlined"
+              density="comfortable"
               :error-messages="formErrors.idStatut"
               :loading="loading"
+              hide-details="auto"
               class="mt-4"
             />
 
-            <div class="d-flex justify-end gap-2 mt-4">
+            <VDivider class="mt-4 mb-4" />
+
+            <div class="d-flex justify-end gap-3">
               <VBtn
                 variant="tonal"
                 color="secondary"
-                @click="showDialog = false"
                 :disabled="isSubmitting"
+                @click="showDialog = false"
+                size="large"
               >
                 Annuler
               </VBtn>
@@ -893,8 +1033,10 @@ onUnmounted(() => {
                 color="primary"
                 :loading="isSubmitting"
                 :disabled="isSubmitting"
+                size="large"
+                prepend-icon="bx-save"
               >
-                {{ isEditing ? 'Modifier' : 'Ajouter' }}
+                {{ isEditing ? 'Enregistrer' : 'Ajouter' }}
               </VBtn>
             </div>
           </VForm>
@@ -902,34 +1044,37 @@ onUnmounted(() => {
       </VCard>
     </VDialog>
 
-    <!-- Dialogue de confirmation de suppression -->
+    <!-- Confirmation Dialog -->
     <VDialog
       v-model="showDeleteDialog"
       max-width="420"
       persistent
+      transition="fade-transition"
     >
-      <VCard>
-        <VCardItem>
-          <VCardTitle class="text-error">
-            Confirmer la suppression
-          </VCardTitle>
-          <VCardSubtitle>
-            Êtes-vous sûr de vouloir supprimer cet équipement ?
-          </VCardSubtitle>
-        </VCardItem>
+      <VCard rounded="lg" class="dialog-card">
+        <VCardText class="text-center pt-8">
+          <VAvatar
+            variant="tonal"
+            color="error"
+            size="56"
+            class="mb-4"
+          >
+            <VIcon icon="bx-trash" size="28" />
+          </VAvatar>
 
-        <VCardText>
-          <p class="text-medium-emphasis">
+          <h6 class="text-h6 mb-1">Confirmer la suppression</h6>
+          <p class="text-medium-emphasis mb-1">
             Vous êtes sur le point de supprimer l'équipement
             <strong class="text-high-emphasis">"{{ equipementToDelete?.immatriculationEquipement }}"</strong>.
           </p>
-          <p class="text-error text-caption">
-            <VIcon icon="bx-error-circle" size="16" class="me-1" />
+
+          <p class="text-error text-caption mt-4 d-flex align-center justify-center gap-1">
+            <VIcon icon="bx-error-circle" size="16" />
             Cette action est irréversible.
           </p>
         </VCardText>
 
-        <VCardActions class="d-flex justify-end gap-2 pa-4">
+        <VCardActions class="d-flex justify-center gap-2 pa-4 pt-2">
           <VBtn
             variant="tonal"
             color="secondary"
@@ -954,19 +1099,23 @@ onUnmounted(() => {
       :timeout="snackbar.timeout"
       location="top end"
       variant="flat"
+      rounded="lg"
+      class="snackbar-custom"
     >
-      <VIcon
-        :icon="snackbar.color === 'success' ? 'bx-check-circle' : snackbar.color === 'warning' ? 'bx-error-circle' : 'bx-x-circle'"
-        size="24"
-        class="me-2"
-      />
-      {{ snackbar.message }}
-
+      <div class="d-flex align-center">
+        <VIcon
+          :icon="snackbar.color === 'success' ? 'bx-check-circle' : snackbar.color === 'warning' ? 'bx-error-circle' : 'bx-x-circle'"
+          size="24"
+          class="me-2"
+        />
+        <span class="font-weight-medium">{{ snackbar.message }}</span>
+      </div>
       <template #actions>
         <VBtn
           variant="text"
           icon="bx-x"
           @click="snackbar.show = false"
+          size="small"
         />
       </template>
     </VSnackbar>
@@ -974,7 +1123,137 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* ========== STATS CARDS ========== */
+.stat-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+.stat-icon {
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.bg-primary-light {
+  background-color: rgba(var(--v-theme-primary), 0.10);
+}
+.bg-success-light {
+  background-color: rgba(var(--v-theme-success), 0.10);
+}
+.bg-error-light {
+  background-color: rgba(var(--v-theme-error), 0.10);
+}
+.bg-info-light {
+  background-color: rgba(var(--v-theme-info), 0.10);
+}
+
+/* ========== MAIN CARD ========== */
+.main-card {
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+}
+
+.border-bottom {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+.border-top {
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+/* ========== TABLE ========== */
+.custom-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.custom-table thead th {
+  background: rgba(0, 0, 0, 0.02);
+  padding: 12px 16px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: rgba(0, 0, 0, 0.6);
+  border-bottom: 2px solid rgba(0, 0, 0, 0.06);
+  white-space: nowrap;
+}
+
+.custom-table tbody td {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  vertical-align: middle;
+}
+
+.custom-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table-row {
+  transition: background-color 0.15s ease;
+}
+
+.table-row:hover {
+  background-color: rgba(var(--v-theme-primary), 0.03);
+}
+
+/* ========== DIALOG ========== */
+.dialog-card {
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+}
+
+/* ========== SNACKBAR ========== */
+.snackbar-custom {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* ========== RESPONSIVE ========== */
+@media (max-width: 600px) {
+  .stat-card .text-h4 {
+    font-size: 1.5rem;
+  }
+  .stat-icon {
+    width: 40px;
+    height: 40px;
+  }
+  .stat-icon .v-icon {
+    font-size: 20px !important;
+  }
+}
+
+@media (max-width: 960px) {
+  .custom-table thead th {
+    font-size: 0.65rem;
+    padding: 8px 10px;
+  }
+  .custom-table tbody td {
+    padding: 8px 10px;
+    font-size: 0.85rem;
+  }
+}
+
+/* ========== UTILITY ========== */
+.gap-1 {
+  gap: 4px;
+}
 .gap-2 {
   gap: 8px;
+}
+.gap-3 {
+  gap: 12px;
+}
+.gap-4 {
+  gap: 16px;
+}
+.flex-wrap {
+  flex-wrap: wrap;
 }
 </style>
