@@ -241,19 +241,16 @@ const getEtapeEnAttente = (demande) => {
 }
 
 // -----------------------------------------------------------------------
-// Export Excel (ExcelJS) — en-tête institutionnel, colonnes ajustées,
-// couleurs de statut, bordures, filtre automatique, ligne de total
+// Export Excel (ExcelJS) — version avec la colonne "Étape"
 // -----------------------------------------------------------------------
 const exportToExcel = async () => {
   if (isExporting.value) return
   isExporting.value = true
 
-  // On mémorise la page actuellement affichée à l'écran pour la restaurer après l'export,
-  // car on va temporairement écraser l'état du store en récupérant toutes les pages.
   const savedPage = currentPage.value
 
   try {
-    // --- Récupération de TOUTES les demandes (pas seulement la page affichée) ---
+    // Récupération de TOUTES les demandes
     const dataSource = []
     const exportPageSize = 200
     let page = 0
@@ -285,18 +282,19 @@ const exportToExcel = async () => {
     const LIGHT = 'FFF4F7FB'
     const BORDER = 'FFD9E2EC'
 
+    // --- En‑têtes : 11 colonnes (ajout de "Étape") ---
     const headers = [
       'N°', 'Demandeur', 'Équipement', 'Station', 'Carburant',
-      'Qté demandée (L)', 'Qté accordée (L)', 'Statut', 'Date', 'Commentaire'
+      'Qté demandée (L)', 'Qté accordée (L)', 'Statut', 'Étape', 'Date', 'Commentaire'
     ]
 
     worksheet.columns = [
       { width: 6 }, { width: 26 }, { width: 20 }, { width: 20 }, { width: 14 },
-      { width: 18 }, { width: 18 }, { width: 18 }, { width: 14 }, { width: 34 }
+      { width: 18 }, { width: 18 }, { width: 18 }, { width: 20 }, { width: 14 }, { width: 34 }
     ]
 
-    // --- En-tête institutionnel ---
-    worksheet.mergeCells('A1:J1')
+    // --- En‑tête institutionnel (fusion sur A1:K1) ---
+    worksheet.mergeCells('A1:K1')
     const titleCell = worksheet.getCell('A1')
     titleCell.value = "MINISTÈRE DES FINANCES, DU BUDGET ET DE L'ÉCONOMIE NUMÉRIQUE"
     titleCell.font = { bold: true, size: 13, color: { argb: 'FFFFFFFF' } }
@@ -304,14 +302,14 @@ const exportToExcel = async () => {
     titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }
     worksheet.getRow(1).height = 30
 
-    worksheet.mergeCells('A2:J2')
+    worksheet.mergeCells('A2:K2')
     const subtitleCell = worksheet.getCell('A2')
     subtitleCell.value = 'SI GESCAR — Rapport des demandes de carburant'
     subtitleCell.font = { bold: true, italic: true, size: 11, color: { argb: 'FF1E3A5F' } }
     subtitleCell.alignment = { horizontal: 'center' }
     worksheet.getRow(2).height = 20
 
-    worksheet.mergeCells('A3:J3')
+    worksheet.mergeCells('A3:K3')
     const dateCell = worksheet.getCell('A3')
     dateCell.value = `Généré le ${new Date().toLocaleString('fr-FR')} — ${dataSource.length} demande(s)`
     dateCell.font = { size: 9, color: { argb: 'FF64748B' } }
@@ -320,7 +318,7 @@ const exportToExcel = async () => {
 
     worksheet.getRow(4).height = 6 // séparateur
 
-    // --- Ligne d'en-tête des colonnes ---
+    // --- Ligne d'en‑tête des colonnes (ligne 5) ---
     const headerRowIndex = 5
     const headerRow = worksheet.getRow(headerRowIndex)
     headerRow.values = headers
@@ -340,8 +338,17 @@ const exportToExcel = async () => {
     // --- Lignes de données ---
     dataSource.forEach((d, i) => {
       const etapeValidee = (d.validations || []).find(v => v.quantiteAccordee != null)
-      const rowIndex = headerRowIndex + 1 + i
+      const etapeEnAttente = getEtapeEnAttente(d)
 
+      let etapeStr = '-'
+      if (etapeEnAttente) {
+        etapeStr = `Niveau ${etapeEnAttente.niveau}`
+        if (etapeEnAttente.utilisateur) {
+          etapeStr += ` - ${etapeEnAttente.utilisateur}`
+        }
+      }
+
+      const rowIndex = headerRowIndex + 1 + i
       const row = worksheet.getRow(rowIndex)
       row.values = [
         i + 1,
@@ -352,6 +359,7 @@ const exportToExcel = async () => {
         d.quantiteDemandee ?? '-',
         etapeValidee?.quantiteAccordee ?? '-',
         d.statutDemande || '-',
+        etapeStr,
         formatDate(d.dateEnregistrement),
         d.descriptionDemande || d.commentaire || ''
       ]
@@ -366,34 +374,35 @@ const exportToExcel = async () => {
         }
         cell.alignment = {
           vertical: 'middle',
-          horizontal: (colNumber === 2 || colNumber === 10) ? 'left' : 'center',
-          wrapText: colNumber === 10
+          horizontal: (colNumber === 2 || colNumber === 11) ? 'left' : 'center',
+          wrapText: colNumber === 11
         }
         cell.font = { size: 10, color: { argb: 'FF1E293B' } }
       })
 
+      // Alternance des couleurs de fond
       if (i % 2 === 1) {
         row.eachCell(cell => {
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: LIGHT } }
         })
       }
 
-      // Colonnes quantités en gras
+      // Quantités en gras
       row.getCell(6).font = { ...row.getCell(6).font, bold: true }
       row.getCell(7).font = { ...row.getCell(7).font, bold: true }
 
-      // Statut colorié
+      // Statut colorié (colonne 8)
       const statutCell = row.getCell(8)
       statutCell.font = { bold: true, size: 10, color: { argb: statutColorExcel(d.statutDemande) } }
     })
 
     const lastDataRow = headerRowIndex + dataSource.length
 
-    // --- Filtre automatique sur les colonnes ---
+    // --- Filtre automatique sur les 11 colonnes ---
     if (dataSource.length > 0) {
       worksheet.autoFilter = {
         from: { row: headerRowIndex, column: 1 },
-        to: { row: lastDataRow, column: 10 }
+        to: { row: lastDataRow, column: 11 }
       }
     }
 
@@ -441,7 +450,6 @@ const exportToExcel = async () => {
     console.error('Erreur export Excel:', error)
     showNotification("Erreur lors de l'export Excel", 'error')
   } finally {
-    // Restaure l'affichage tel qu'il était avant l'export (page + filtres actuels)
     currentPage.value = savedPage
     await loadDemandesAValider()
     isExporting.value = false
@@ -522,7 +530,6 @@ const openValidationDialog = (action, demande) => {
     validationQuantiteAccordee.value = etape.quantiteAccordee ?? demande.quantiteDemandee ?? null
     validationErreurEtape.value = false
   } else {
-    // Pas d'étape "en_attente" trouvée : on ne peut pas construire idUnite/niveauValidation en toute sécurité
     validationDemandeIdUnite.value = null
     validationNiveauValidation.value = null
     validationQuantiteAccordee.value = demande.quantiteDemandee ?? null
@@ -806,7 +813,7 @@ onUnmounted(() => {
                   {{ demande.statutDemande || '-' }}
                 </VChip>
               </td>
-              <!-- Nouvelle colonne Étape -->
+              <!-- Colonne Étape -->
               <td class="text-center">
                 <template v-if="getEtapeEnAttente(demande)">
                   <VChip size="small" label color="warning">
@@ -878,7 +885,6 @@ onUnmounted(() => {
           <VForm @submit.prevent="createDemande">
             <!-- Photo (aperçu local avant envoi : FileReader, indépendant du cache authentifié) -->
             <div class="d-flex align-center mb-4">
-              <!-- Aperçu plus grand (80px) -->
               <div
                 class="photo-preview"
                 :style="{
@@ -1037,7 +1043,6 @@ onUnmounted(() => {
             <VListItem v-if="demandeCourante.photoTableauDeBord">
               <VListItemTitle>Photo</VListItemTitle>
               <VListItemSubtitle>
-                <!-- Affichage plus grand et avec bordure -->
                 <div
                   class="detail-photo"
                   :style="{

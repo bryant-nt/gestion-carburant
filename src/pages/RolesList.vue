@@ -20,6 +20,7 @@ const isSubmitting = ref(false)
 // État du dialogue de confirmation de suppression
 const showDeleteDialog = ref(false)
 const roleToDelete = ref(null)
+const isDeleting = ref(false)
 
 // État du snackbar (notification)
 const snackbar = ref({
@@ -41,10 +42,15 @@ const isAdmin = computed(() => authStore.isAdmin)
 const filteredRoles = computed(() => {
   if (!searchQuery.value) return roles.value
   const query = searchQuery.value.toLowerCase()
-  return roles.value.filter(role => 
+  return roles.value.filter(role =>
     role.libelleRole.toLowerCase().includes(query)
   )
 })
+
+const totalRoles = computed(() => roles.value.length)
+const totalUsersAssigned = computed(() =>
+  roles.value.reduce((sum, r) => sum + (r.nombreUtilisateurs || 0), 0)
+)
 
 // Méthodes
 const loadRoles = async () => {
@@ -86,6 +92,11 @@ const openEditDialog = (role) => {
   showDialog.value = true
 }
 
+const closeDialog = () => {
+  if (isSubmitting.value) return
+  showDialog.value = false
+}
+
 const validateForm = () => {
   const errors = {}
   if (!formData.value.libelleRole || formData.value.libelleRole.trim() === '') {
@@ -93,21 +104,21 @@ const validateForm = () => {
   } else if (formData.value.libelleRole.length < 3) {
     errors.libelleRole = 'Le libellé doit contenir au moins 3 caractères'
   }
-  
+
   formErrors.value = errors
   return Object.keys(errors).length === 0
 }
 
 const saveRole = async () => {
   if (!validateForm()) return
-  
+
   isSubmitting.value = true
-  
+
   try {
     const roleData = {
       libelleRole: formData.value.libelleRole.trim()
     }
-    
+
     if (isEditing.value) {
       await rolesStore.updateRole(formData.value.idRole, roleData)
       showNotification('Rôle modifié avec succès ! ✅', 'success')
@@ -115,7 +126,7 @@ const saveRole = async () => {
       await rolesStore.createRole(roleData)
       showNotification('Rôle ajouté avec succès ! ✅', 'success')
     }
-    
+
     showDialog.value = false
     await loadRoles()
   } catch (error) {
@@ -138,7 +149,9 @@ const confirmDelete = (role) => {
 
 const deleteRole = async () => {
   if (!roleToDelete.value) return
-  
+
+  isDeleting.value = true
+
   try {
     await rolesStore.deleteRole(roleToDelete.value.idRole)
     showDeleteDialog.value = false
@@ -152,6 +165,8 @@ const deleteRole = async () => {
     } else {
       showNotification('Erreur lors de la suppression du rôle', 'error')
     }
+  } finally {
+    isDeleting.value = false
   }
 }
 
@@ -164,41 +179,65 @@ onMounted(() => {
 <template>
   <VRow>
     <VCol cols="12">
-      <VCard title="Basic">
-        <template #append>
-          <VBtn
-            color="primary"
-            prepend-icon="bx-plus"
-            @click="openCreateDialog"
-          >
-            Ajouter un rôle
-          </VBtn>
-        </template>
+      <VCard>
+        <VCardItem class="pb-2">
+          <template #prepend>
+            <VAvatar
+              variant="tonal"
+              color="primary"
+              rounded
+              size="42"
+            >
+              <VIcon icon="bx-shield-quarter" size="24" />
+            </VAvatar>
+          </template>
+
+          <VCardTitle>Gestion des rôles</VCardTitle>
+          <VCardSubtitle>
+            {{ totalRoles }} rôle(s) · {{ totalUsersAssigned }} utilisateur(s) affecté(s)
+          </VCardSubtitle>
+
+          <template #append>
+            <VBtn
+              color="primary"
+              prepend-icon="bx-plus"
+              @click="openCreateDialog"
+            >
+              Ajouter un rôle
+            </VBtn>
+          </template>
+        </VCardItem>
+
+        <VDivider />
 
         <!-- Barre de recherche -->
-        <div class="pa-4">
+        <VCardText class="d-flex flex-wrap gap-4 py-4">
           <VTextField
             v-model="searchQuery"
             placeholder="Rechercher un rôle..."
             density="compact"
             prepend-inner-icon="bx-search"
+            style="max-inline-size: 320px;"
             clearable
+            hide-details
           />
-        </div>
+        </VCardText>
 
-        <VTable>
+        <VDivider />
+
+        <VTable class="roles-table">
           <thead>
             <tr>
-              <th class="text-uppercase text-center">
+              <th class="text-uppercase text-center" style="inline-size: 64px;">
                 N°
               </th>
-              <th>
-                Libellé
+              <th class="text-uppercase">
+                Libellé du rôle
               </th>
-              <th class="text-center">
-                Nombre d'utilisateurs
+              <th class="text-uppercase text-center">
+                Utilisateurs
               </th>
-              <th class="text-center">
+              <th class="text-uppercase text-center" style="inline-size: 120px;">
                 Actions
               </th>
             </tr>
@@ -206,47 +245,84 @@ onMounted(() => {
 
           <tbody>
             <tr v-if="loading">
-              <td colspan="4" class="text-center pa-4">
+              <td colspan="4" class="text-center pa-8">
                 <VProgressCircular indeterminate color="primary" />
               </td>
             </tr>
+
             <tr v-else-if="filteredRoles.length === 0">
-              <td colspan="4" class="text-center pa-4 text-medium-emphasis">
-                {{ searchQuery ? 'Aucun rôle trouvé pour cette recherche' : 'Aucun rôle trouvé' }}
+              <td colspan="4" class="text-center pa-8">
+                <VIcon
+                  icon="bx-search-alt"
+                  size="40"
+                  color="disabled"
+                  class="mb-2"
+                />
+                <p class="text-medium-emphasis mb-0">
+                  {{ searchQuery ? 'Aucun rôle trouvé pour cette recherche' : 'Aucun rôle trouvé' }}
+                </p>
               </td>
             </tr>
+
             <tr
               v-for="(role, index) in filteredRoles"
               :key="role.idRole"
             >
-              <td class="text-center">
+              <td class="text-center text-medium-emphasis">
                 {{ index + 1 }}
               </td>
               <td>
-                {{ role.libelleRole }}
+                <div class="d-flex align-center gap-3">
+                  <VAvatar
+                    variant="tonal"
+                    color="primary"
+                    size="34"
+                    rounded
+                  >
+                    <VIcon icon="bx-shield" size="18" />
+                  </VAvatar>
+                  <span class="font-weight-medium">{{ role.libelleRole }}</span>
+                </div>
               </td>
               <td class="text-center">
-                {{ role.nombreUtilisateurs || 0 }}
+                <VChip
+                  :color="role.nombreUtilisateurs ? 'primary' : 'secondary'"
+                  variant="tonal"
+                  size="small"
+                  label
+                >
+                  {{ role.nombreUtilisateurs || 0 }}
+                </VChip>
               </td>
               <td class="text-center">
-                <VBtn
-                  icon
-                  variant="text"
-                  size="small"
-                  color="primary"
-                  @click="openEditDialog(role)"
-                >
-                  <VIcon size="20" icon="bx-edit" />
-                </VBtn>
-                <VBtn
-                  icon
-                  variant="text"
-                  size="small"
-                  color="error"
-                  @click="confirmDelete(role)"
-                >
-                  <VIcon size="20" icon="bx-trash" />
-                </VBtn>
+                <VTooltip text="Modifier">
+                  <template #activator="{ props }">
+                    <VBtn
+                      v-bind="props"
+                      icon
+                      variant="text"
+                      size="small"
+                      color="primary"
+                      @click="openEditDialog(role)"
+                    >
+                      <VIcon size="20" icon="bx-edit" />
+                    </VBtn>
+                  </template>
+                </VTooltip>
+                <VTooltip text="Supprimer">
+                  <template #activator="{ props }">
+                    <VBtn
+                      v-bind="props"
+                      icon
+                      variant="text"
+                      size="small"
+                      color="error"
+                      @click="confirmDelete(role)"
+                    >
+                      <VIcon size="20" icon="bx-trash" />
+                    </VBtn>
+                  </template>
+                </VTooltip>
               </td>
             </tr>
           </tbody>
@@ -257,50 +333,79 @@ onMounted(() => {
     <!-- Dialogue d'ajout/édition -->
     <VDialog
       v-model="showDialog"
-      max-width="500"
+      max-width="480"
       persistent
     >
       <VCard>
-        <VCardItem>
+        <VCardItem class="pb-2">
+          <template #prepend>
+            <VAvatar
+              variant="tonal"
+              :color="isEditing ? 'primary' : 'success'"
+              rounded
+              size="42"
+            >
+              <VIcon :icon="isEditing ? 'bx-edit' : 'bx-plus'" size="22" />
+            </VAvatar>
+          </template>
+
           <VCardTitle>
             {{ isEditing ? 'Modifier le rôle' : 'Ajouter un nouveau rôle' }}
           </VCardTitle>
           <VCardSubtitle>
             {{ isEditing ? 'Modifiez les informations du rôle' : 'Saisissez le libellé du nouveau rôle' }}
           </VCardSubtitle>
+
+          <template #append>
+            <VBtn
+              icon
+              variant="text"
+              size="small"
+              :disabled="isSubmitting"
+              @click="closeDialog"
+            >
+              <VIcon icon="bx-x" size="20" />
+            </VBtn>
+          </template>
         </VCardItem>
 
-        <VCardText>
+        <VDivider class="mt-3" />
+
+        <VCardText class="pt-5">
           <VForm @submit.prevent="saveRole">
             <VTextField
               v-model="formData.libelleRole"
               label="Libellé du rôle"
               placeholder="Ex: Contrôleur, Validateur, ..."
+              prepend-inner-icon="bx-shield"
               :error-messages="formErrors.libelleRole"
-              :loading="isSubmitting"
+              :disabled="isSubmitting"
               autofocus
             />
-
-            <div class="d-flex justify-end gap-2 mt-4">
-              <VBtn
-                variant="tonal"
-                color="secondary"
-                @click="showDialog = false"
-                :disabled="isSubmitting"
-              >
-                Annuler
-              </VBtn>
-              <VBtn
-                type="submit"
-                color="primary"
-                :loading="isSubmitting"
-                :disabled="isSubmitting"
-              >
-                {{ isEditing ? 'Modifier' : 'Ajouter' }}
-              </VBtn>
-            </div>
           </VForm>
         </VCardText>
+
+        <VDivider />
+
+        <VCardActions class="pa-4">
+          <VSpacer />
+          <VBtn
+            variant="tonal"
+            color="secondary"
+            :disabled="isSubmitting"
+            @click="closeDialog"
+          >
+            Annuler
+          </VBtn>
+          <VBtn
+            color="primary"
+            :loading="isSubmitting"
+            :disabled="isSubmitting"
+            @click="saveRole"
+          >
+            {{ isEditing ? 'Enregistrer' : 'Ajouter' }}
+          </VBtn>
+        </VCardActions>
       </VCard>
     </VDialog>
 
@@ -311,36 +416,50 @@ onMounted(() => {
       persistent
     >
       <VCard>
-        <VCardItem>
-          <VCardTitle class="text-error">
+        <VCardText class="text-center pt-8 pb-2">
+          <VAvatar
+            variant="tonal"
+            color="error"
+            size="64"
+            class="mb-4"
+          >
+            <VIcon icon="bx-trash" size="30" />
+          </VAvatar>
+          <h5 class="text-h5 mb-2">
             Confirmer la suppression
-          </VCardTitle>
-          <VCardSubtitle>
-            Êtes-vous sûr de vouloir supprimer ce rôle ?
-          </VCardSubtitle>
-        </VCardItem>
-
-        <VCardText>
-          <p class="text-medium-emphasis">
+          </h5>
+          <p class="text-medium-emphasis mb-0">
             Vous êtes sur le point de supprimer le rôle
             <strong class="text-high-emphasis">"{{ roleToDelete?.libelleRole }}"</strong>.
           </p>
-          <p class="text-error text-caption">
+          <VAlert
+            v-if="roleToDelete?.nombreUtilisateurs"
+            type="warning"
+            variant="tonal"
+            density="compact"
+            class="mt-4 text-start"
+          >
+            Ce rôle est affecté à {{ roleToDelete.nombreUtilisateurs }} utilisateur(s). La suppression pourrait échouer.
+          </VAlert>
+          <p class="text-error text-caption mt-4 mb-0">
             <VIcon icon="bx-error-circle" size="16" class="me-1" />
-            Cette action est irréversible. Les utilisateurs ayant ce rôle pourraient être affectés.
+            Cette action est irréversible.
           </p>
         </VCardText>
 
-        <VCardActions class="d-flex justify-end gap-2 pa-4">
+        <VCardActions class="d-flex justify-center gap-2 pa-6 pt-4">
           <VBtn
             variant="tonal"
             color="secondary"
+            :disabled="isDeleting"
             @click="showDeleteDialog = false"
           >
             Annuler
           </VBtn>
           <VBtn
             color="error"
+            :loading="isDeleting"
+            :disabled="isDeleting"
             @click="deleteRole"
           >
             Supprimer
@@ -363,7 +482,7 @@ onMounted(() => {
         class="me-2"
       />
       {{ snackbar.message }}
-      
+
       <template #actions>
         <VBtn
           variant="text"
@@ -378,5 +497,19 @@ onMounted(() => {
 <style scoped>
 .gap-2 {
   gap: 8px;
+}
+.gap-3 {
+  gap: 12px;
+}
+.gap-4 {
+  gap: 16px;
+}
+.roles-table :deep(th) {
+  font-size: 0.75rem;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+.roles-table :deep(tbody tr:hover) {
+  background-color: rgba(var(--v-theme-primary), 0.04);
 }
 </style>

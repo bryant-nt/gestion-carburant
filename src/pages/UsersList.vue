@@ -16,7 +16,6 @@ const loadAuthenticatedPhoto = async (id, photoPath) => {
     const response = await axiosIns.get(cleanPath, { responseType: 'blob' })
     const objectUrl = URL.createObjectURL(response.data)
     photoUrlCache.set(id, objectUrl)
-    console.log('✅ Photo protégée chargée pour ID', id)
   } catch (error) {
     console.error('❌ Impossible de charger la photo protégée pour ID', id, error)
     brokenPhotos.value.add(id)
@@ -97,6 +96,11 @@ const users = computed(() => usersStore.users)
 const roles = computed(() => rolesStore.roles)
 const loading = computed(() => usersStore.loading || rolesStore.loading)
 
+// Statistiques d'en-tête
+const totalUsers = computed(() => users.value.length)
+const activeUsersCount = computed(() => users.value.filter(u => u.statutUtilisateur === 'actif').length)
+const inactiveUsersCount = computed(() => totalUsers.value - activeUsersCount.value)
+
 // Options pour les roles
 const roleOptions = computed(() => {
   return roles.value.map(role => ({
@@ -110,29 +114,46 @@ const statusOptions = [
   { title: 'Inactif', value: 'inactif' }
 ]
 
+const hasActiveFilters = computed(() =>
+  !!searchQuery.value || !!filterRole.value || !!filterStatus.value
+)
+
 // Filtrer les utilisateurs
 const filteredUsers = computed(() => {
   let result = users.value
-  
+
   if (searchQuery.value) {
     const query = searchQuery.value.toLowerCase()
-    result = result.filter(user => 
+    result = result.filter(user =>
       user.nomUtilisateur?.toLowerCase().includes(query) ||
       user.prenomUtilisateur?.toLowerCase().includes(query) ||
       user.emailUtilisateur?.toLowerCase().includes(query)
     )
   }
-  
+
   if (filterRole.value) {
     result = result.filter(user => user.role?.idRole === filterRole.value)
   }
-  
+
   if (filterStatus.value) {
     result = result.filter(user => user.statutUtilisateur === filterStatus.value)
   }
-  
+
   return result
 })
+
+// Couleur de rôle stable (dérivée du libellé, pas aléatoire)
+const roleColorPalette = ['primary', 'info', 'success', 'warning', 'secondary', 'error']
+const roleColor = (roleLabel) => {
+  if (!roleLabel) return 'secondary'
+  let hash = 0
+  for (let i = 0; i < roleLabel.length; i++) {
+    hash = roleLabel.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return roleColorPalette[Math.abs(hash) % roleColorPalette.length]
+}
+
+const initials = (user) => `${user.prenomUtilisateur?.[0] || ''}${user.nomUtilisateur?.[0] || ''}`.toUpperCase()
 
 // Méthodes
 const loadData = async () => {
@@ -246,38 +267,38 @@ const removePhoto = () => {
 
 const validateForm = () => {
   const errors = {}
-  
+
   if (!formData.value.nomUtilisateur || formData.value.nomUtilisateur.trim() === '') {
     errors.nomUtilisateur = 'Le nom est requis'
   }
-  
+
   if (!formData.value.prenomUtilisateur || formData.value.prenomUtilisateur.trim() === '') {
     errors.prenomUtilisateur = 'Le prénom est requis'
   }
-  
+
   if (!formData.value.emailUtilisateur || formData.value.emailUtilisateur.trim() === '') {
     errors.emailUtilisateur = 'L\'email est requis'
   } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.value.emailUtilisateur)) {
     errors.emailUtilisateur = 'Email invalide'
   }
-  
+
   if (!formData.value.idRole) {
     errors.idRole = 'Le rôle est requis'
   }
-  
+
   if (!isEditing.value && (!formData.value.motDePasse || formData.value.motDePasse.length < 6)) {
     errors.motDePasse = 'Le mot de passe doit contenir au moins 6 caractères'
   }
-  
+
   formErrors.value = errors
   return Object.keys(errors).length === 0
 }
 
 const saveUser = async () => {
   if (!validateForm()) return
-  
+
   isSubmitting.value = true
-  
+
   try {
     const userData = {
       nomUtilisateur: formData.value.nomUtilisateur.trim(),
@@ -288,7 +309,7 @@ const saveUser = async () => {
       statutUtilisateur: formData.value.statutUtilisateur === 'actif',
       idRole: formData.value.idRole
     }
-    
+
     // Upload de la photo si un fichier est sélectionné
     let photoPath = null
     if (formData.value.photoFile) {
@@ -308,7 +329,6 @@ const saveUser = async () => {
       const response = await usersStore.createUser(userData)
       // Si l'upload a réussi et que le user est créé, on met à jour la photo (selon l'API)
       if (photoPath && response.utilisateurId) {
-        // Mettre à jour l'utilisateur avec le chemin de la photo
         await usersStore.updateUser(response.utilisateurId, { ...userData, photoUtilisateur: photoPath })
       }
       showNotification('Utilisateur créé avec succès ! ✅', 'success')
@@ -319,7 +339,7 @@ const saveUser = async () => {
       await usersStore.updateUser(formData.value.utilisateurId, userData)
       showNotification('Utilisateur modifié avec succès ! ✅', 'success')
     }
-    
+
     showDialog.value = false
     await loadData()
   } catch (error) {
@@ -349,7 +369,7 @@ const confirmDelete = (user) => {
 
 const executeAction = async () => {
   if (!userToConfirm.value) return
-  
+
   try {
     if (confirmAction.value === 'deactivate') {
       await usersStore.deactivateUser(userToConfirm.value.utilisateurId)
@@ -358,7 +378,7 @@ const executeAction = async () => {
       await usersStore.deleteUser(userToConfirm.value.utilisateurId)
       showNotification(`Utilisateur supprimé avec succès ! 🗑️`, 'success')
     }
-    
+
     showConfirmDialog.value = false
     userToConfirm.value = null
     await loadData()
@@ -387,29 +407,65 @@ onUnmounted(() => {
 
 <template>
   <VRow>
+    <!-- En-tête + statistiques -->
     <VCol cols="12">
-      <VCard title="Gestion des utilisateurs">
-        <template #append>
-          <VBtn
-            color="primary"
-            prepend-icon="bx-plus"
-            @click="openCreateDialog"
-          >
-            Ajouter un utilisateur
-          </VBtn>
-        </template>
+      <VCard class="users-header-card" flat>
+        <VCardText class="d-flex flex-wrap align-center justify-space-between gap-4">
+          <div class="d-flex align-center gap-3">
+            <VAvatar size="48" color="primary" variant="tonal" rounded="lg">
+              <VIcon icon="bx-group" size="26" />
+            </VAvatar>
+            <div>
+              <h5 class="text-h5 font-weight-medium mb-0">
+                Gestion des utilisateurs
+              </h5>
+              <span class="text-body-2 text-medium-emphasis">
+                Comptes, rôles et accès de la plateforme
+              </span>
+            </div>
+          </div>
 
-        <!-- Filtres -->
+          <div class="d-flex flex-wrap align-center gap-3">
+            <div class="stat-pill">
+              <span class="stat-pill__value">{{ totalUsers }}</span>
+              <span class="stat-pill__label">Total</span>
+            </div>
+            <div class="stat-pill stat-pill--success">
+              <span class="stat-pill__value">{{ activeUsersCount }}</span>
+              <span class="stat-pill__label">Actifs</span>
+            </div>
+            <div class="stat-pill stat-pill--error">
+              <span class="stat-pill__value">{{ inactiveUsersCount }}</span>
+              <span class="stat-pill__label">Inactifs</span>
+            </div>
+
+            <VBtn
+              color="primary"
+              prepend-icon="bx-plus"
+              @click="openCreateDialog"
+            >
+              Ajouter un utilisateur
+            </VBtn>
+          </div>
+        </VCardText>
+      </VCard>
+    </VCol>
+
+    <!-- Filtres -->
+    <VCol cols="12">
+      <VCard flat>
         <VCardText>
-          <VRow>
+          <VRow align="center">
             <VCol cols="12" md="4">
               <VTextField
                 v-model="searchQuery"
-                label="Rechercher..."
+                label="Rechercher"
                 placeholder="Nom, prénom ou email"
                 density="compact"
+                variant="outlined"
                 prepend-inner-icon="bx-search"
                 clearable
+                hide-details
               />
             </VCol>
             <VCol cols="12" md="3">
@@ -420,26 +476,35 @@ onUnmounted(() => {
                 item-title="title"
                 item-value="value"
                 placeholder="Tous les rôles"
+                prepend-inner-icon="bx-shield-quarter"
+                variant="outlined"
                 clearable
                 density="compact"
+                hide-details
               />
             </VCol>
-            <VCol cols="12" md="2">
+            <VCol cols="12" md="3">
               <VSelect
                 v-model="filterStatus"
                 label="Statut"
                 :items="statusOptions"
                 item-title="title"
                 item-value="value"
-                placeholder="Tous"
+                placeholder="Tous les statuts"
+                prepend-inner-icon="bx-toggle-left"
+                variant="outlined"
                 clearable
                 density="compact"
+                hide-details
               />
             </VCol>
-            <VCol cols="12" md="auto">
+            <VCol cols="12" md="2" class="d-flex justify-end">
               <VBtn
                 color="secondary"
                 variant="tonal"
+                prepend-icon="bx-reset"
+                :disabled="!hasActiveFilters"
+                block
                 @click="resetFilters"
               >
                 Réinitialiser
@@ -448,14 +513,16 @@ onUnmounted(() => {
           </VRow>
         </VCardText>
 
+        <VDivider />
+
         <!-- Tableau des utilisateurs -->
-        <VTable>
+        <VTable class="users-table">
           <thead>
             <tr>
-              <th class="text-uppercase text-center">
+              <th class="text-uppercase text-center" style="width: 56px;">
                 N°
               </th>
-              <th>
+              <th style="width: 64px;">
                 Photo
               </th>
               <th>
@@ -476,7 +543,7 @@ onUnmounted(() => {
               <th class="text-center">
                 Statut
               </th>
-              <th class="text-center">
+              <th class="text-center" style="width: 140px;">
                 Actions
               </th>
             </tr>
@@ -484,25 +551,35 @@ onUnmounted(() => {
 
           <tbody>
             <tr v-if="loading">
-              <td colspan="9" class="text-center pa-4">
-                <VProgressCircular indeterminate color="primary" />
+              <td colspan="9" class="text-center pa-8">
+                <VProgressCircular indeterminate color="primary" size="32" />
+                <div class="text-body-2 text-medium-emphasis mt-2">
+                  Chargement des utilisateurs…
+                </div>
               </td>
             </tr>
             <tr v-else-if="filteredUsers.length === 0">
-              <td colspan="9" class="text-center pa-4 text-medium-emphasis">
-                Aucun utilisateur trouvé
+              <td colspan="9" class="text-center pa-8">
+                <VIcon icon="bx-user-x" size="40" class="text-disabled mb-2" />
+                <div class="text-body-1 font-weight-medium">
+                  Aucun utilisateur trouvé
+                </div>
+                <div class="text-body-2 text-medium-emphasis">
+                  Essayez d'ajuster votre recherche ou vos filtres
+                </div>
               </td>
             </tr>
             <tr
               v-for="(user, index) in filteredUsers"
               :key="user.utilisateurId"
+              class="users-table__row"
             >
-              <td class="text-center">
+              <td class="text-center text-medium-emphasis">
                 {{ index + 1 }}
               </td>
               <td>
                 <VAvatar
-                  size="32"
+                  size="36"
                   :color="(!photoUrlCache.get('user-' + user.utilisateurId) || brokenPhotos.has('user-' + user.utilisateurId)) ? 'primary' : undefined"
                   :variant="(!photoUrlCache.get('user-' + user.utilisateurId) || brokenPhotos.has('user-' + user.utilisateurId)) ? 'tonal' : undefined"
                 >
@@ -513,89 +590,115 @@ onUnmounted(() => {
                     @error="onPhotoError('user-' + user.utilisateurId)"
                   />
                   <span v-else class="text-caption font-weight-medium">
-                    {{ user.prenomUtilisateur?.[0] }}{{ user.nomUtilisateur?.[0] }}
+                    {{ initials(user) }}
                   </span>
                 </VAvatar>
               </td>
               <td>
-                <div>
-                  <div class="font-weight-medium">
-                    {{ user.prenomUtilisateur }} {{ user.nomUtilisateur }}
-                  </div>
+                <div class="font-weight-medium">
+                  {{ user.prenomUtilisateur }} {{ user.nomUtilisateur }}
                 </div>
               </td>
-              <td>
+              <td class="text-medium-emphasis">
                 {{ user.emailUtilisateur }}
               </td>
-              <td>
-                {{ user.telephoneUtilisateur || '-' }}
+              <td class="text-medium-emphasis">
+                {{ user.telephoneUtilisateur || '—' }}
               </td>
               <td>
                 <VChip
                   size="small"
                   label
-                  color="primary"
+                  :color="roleColor(user.role?.libelleRole)"
+                  variant="tonal"
                 >
-                  {{ user.role?.libelleRole || '-' }}
+                  {{ user.role?.libelleRole || '—' }}
                 </VChip>
               </td>
-              <td>
-                {{ user.uniteOrganisationnelles?.libelleUnite || '-' }}
+              <td class="text-medium-emphasis">
+                {{ user.uniteOrganisationnelles?.libelleUnite || '—' }}
               </td>
               <td class="text-center">
                 <VChip
                   size="small"
                   label
                   :color="user.statutUtilisateur === 'actif' ? 'success' : 'error'"
+                  variant="tonal"
                 >
+                  <VIcon
+                    :icon="user.statutUtilisateur === 'actif' ? 'bx-check-circle' : 'bx-x-circle'"
+                    size="14"
+                    start
+                  />
                   {{ user.statutUtilisateur === 'actif' ? 'Actif' : 'Inactif' }}
                 </VChip>
               </td>
               <td class="text-center">
-                <VBtn
-                  icon
-                  variant="text"
-                  size="small"
-                  color="primary"
-                  @click="openEditDialog(user)"
-                >
-                  <VIcon size="20" icon="bx-edit" />
-                </VBtn>
-                <VBtn
-                  v-if="user.statutUtilisateur === 'actif'"
-                  icon
-                  variant="text"
-                  size="small"
-                  color="warning"
-                  @click="confirmDeactivate(user)"
-                >
-                  <VIcon size="20" icon="bx-pause-circle" />
-                </VBtn>
-                <VBtn
-                  icon
-                  variant="text"
-                  size="small"
-                  color="error"
-                  @click="confirmDelete(user)"
-                >
-                  <VIcon size="20" icon="bx-trash" />
-                </VBtn>
+                <div class="d-flex justify-center gap-1">
+                  <VTooltip text="Modifier">
+                    <template #activator="{ props }">
+                      <VBtn
+                        v-bind="props"
+                        icon
+                        variant="text"
+                        size="small"
+                        color="primary"
+                        @click="openEditDialog(user)"
+                      >
+                        <VIcon size="20" icon="bx-edit" />
+                      </VBtn>
+                    </template>
+                  </VTooltip>
+                  <VTooltip v-if="user.statutUtilisateur === 'actif'" text="Désactiver">
+                    <template #activator="{ props }">
+                      <VBtn
+                        v-bind="props"
+                        icon
+                        variant="text"
+                        size="small"
+                        color="warning"
+                        @click="confirmDeactivate(user)"
+                      >
+                        <VIcon size="20" icon="bx-pause-circle" />
+                      </VBtn>
+                    </template>
+                  </VTooltip>
+                  <VTooltip text="Supprimer">
+                    <template #activator="{ props }">
+                      <VBtn
+                        v-bind="props"
+                        icon
+                        variant="text"
+                        size="small"
+                        color="error"
+                        @click="confirmDelete(user)"
+                      >
+                        <VIcon size="20" icon="bx-trash" />
+                      </VBtn>
+                    </template>
+                  </VTooltip>
+                </div>
               </td>
             </tr>
           </tbody>
         </VTable>
+
+        <VCardText v-if="!loading && filteredUsers.length > 0" class="text-body-2 text-medium-emphasis py-3">
+          {{ filteredUsers.length }} utilisateur(s) affiché(s) sur {{ totalUsers }}
+        </VCardText>
       </VCard>
     </VCol>
 
     <!-- Dialogue d'ajout/édition -->
     <VDialog
       v-model="showDialog"
-      max-width="600"
+      max-width="640"
       persistent
     >
       <VCard>
-        <VCardItem>
-          <VCardTitle>
+        <VCardItem class="dialog-header">
+          <VCardTitle class="d-flex align-center gap-2">
+            <VIcon :icon="isEditing ? 'bx-edit' : 'bx-user-plus'" size="20" />
             {{ isEditing ? 'Modifier l\'utilisateur' : 'Ajouter un utilisateur' }}
           </VCardTitle>
           <VCardSubtitle>
@@ -603,10 +706,12 @@ onUnmounted(() => {
           </VCardSubtitle>
         </VCardItem>
 
-        <VCardText>
+        <VDivider />
+
+        <VCardText class="pt-5">
           <VForm @submit.prevent="saveUser">
             <!-- Photo de profil -->
-            <div class="d-flex align-center mb-4">
+            <div class="d-flex align-center mb-6">
               <VAvatar
                 size="80"
                 :color="!photoPreview ? 'primary' : undefined"
@@ -619,15 +724,17 @@ onUnmounted(() => {
                 </span>
               </VAvatar>
               <div>
-                <div class="text-caption text-medium-emphasis">Photo de profil</div>
-                <div class="d-flex gap-2 mt-1">
+                <div class="text-caption text-medium-emphasis text-uppercase font-weight-medium">
+                  Photo de profil
+                </div>
+                <div class="d-flex gap-2 mt-2">
                   <VBtn
                     size="small"
                     variant="tonal"
                     color="primary"
+                    prepend-icon="bx-upload"
                     @click="$refs.fileInput.click()"
                   >
-                    <VIcon icon="bx-upload" size="16" class="me-1" />
                     Choisir
                   </VBtn>
                   <VBtn
@@ -635,9 +742,9 @@ onUnmounted(() => {
                     size="small"
                     variant="tonal"
                     color="error"
+                    prepend-icon="bx-trash"
                     @click="removePhoto"
                   >
-                    <VIcon icon="bx-trash" size="16" class="me-1" />
                     Supprimer
                   </VBtn>
                 </div>
@@ -655,12 +762,19 @@ onUnmounted(() => {
               </div>
             </div>
 
+            <!-- Informations personnelles -->
+            <div class="form-section-label">
+              <VIcon icon="bx-id-card" size="16" />
+              Informations personnelles
+            </div>
             <VRow>
               <VCol cols="12" md="6">
                 <VTextField
                   v-model="formData.nomUtilisateur"
                   label="Nom"
                   placeholder="Ex: Dupont"
+                  variant="outlined"
+                  density="comfortable"
                   :error-messages="formErrors.nomUtilisateur"
                   :loading="isSubmitting"
                   autofocus
@@ -671,76 +785,113 @@ onUnmounted(() => {
                   v-model="formData.prenomUtilisateur"
                   label="Prénom"
                   placeholder="Ex: Jean"
+                  variant="outlined"
+                  density="comfortable"
                   :error-messages="formErrors.prenomUtilisateur"
                   :loading="isSubmitting"
                 />
               </VCol>
             </VRow>
 
-            <VTextField
-              v-model="formData.emailUtilisateur"
-              label="Email"
-              placeholder="Ex: jean.dupont@example.com"
-              :error-messages="formErrors.emailUtilisateur"
-              :loading="isSubmitting"
-              class="mt-4"
-            />
+            <!-- Coordonnées -->
+            <div class="form-section-label mt-2">
+              <VIcon icon="bx-envelope" size="16" />
+              Coordonnées
+            </div>
+            <VRow>
+              <VCol cols="12">
+                <VTextField
+                  v-model="formData.emailUtilisateur"
+                  label="Email"
+                  placeholder="Ex: jean.dupont@example.com"
+                  variant="outlined"
+                  density="comfortable"
+                  :error-messages="formErrors.emailUtilisateur"
+                  :loading="isSubmitting"
+                />
+              </VCol>
+              <VCol cols="12" md="6">
+                <VTextField
+                  v-model="formData.telephoneUtilisateur"
+                  label="Téléphone"
+                  placeholder="Ex: +257 00 00 00 01"
+                  variant="outlined"
+                  density="comfortable"
+                  :loading="isSubmitting"
+                />
+              </VCol>
+              <VCol cols="12" md="6">
+                <VTextField
+                  v-model="formData.adresseUtilisateur"
+                  label="Adresse"
+                  placeholder="Ex: Bujumbura, Rohero"
+                  variant="outlined"
+                  density="comfortable"
+                  :loading="isSubmitting"
+                />
+              </VCol>
+            </VRow>
 
-            <VTextField
-              v-model="formData.telephoneUtilisateur"
-              label="Téléphone"
-              placeholder="Ex: +243900000001"
-              :loading="isSubmitting"
-              class="mt-4"
-            />
+            <!-- Rôle et statut -->
+            <div class="form-section-label mt-2">
+              <VIcon icon="bx-shield-quarter" size="16" />
+              Rôle et accès
+            </div>
+            <VRow>
+              <VCol cols="12" md="6">
+                <VSelect
+                  v-model="formData.idRole"
+                  label="Rôle"
+                  :items="roleOptions"
+                  item-title="title"
+                  item-value="value"
+                  placeholder="Sélectionner un rôle"
+                  variant="outlined"
+                  density="comfortable"
+                  :error-messages="formErrors.idRole"
+                  :loading="loading"
+                />
+              </VCol>
+              <VCol cols="12" md="6">
+                <VSelect
+                  v-model="formData.statutUtilisateur"
+                  label="Statut"
+                  :items="statusOptions"
+                  item-title="title"
+                  item-value="value"
+                  placeholder="Sélectionner un statut"
+                  variant="outlined"
+                  density="comfortable"
+                />
+              </VCol>
+            </VRow>
 
-            <VTextField
-              v-model="formData.adresseUtilisateur"
-              label="Adresse"
-              placeholder="Ex: Kinshasa, Gombe"
-              :loading="isSubmitting"
-              class="mt-4"
-            />
+            <!-- Sécurité -->
+            <template v-if="!isEditing">
+              <div class="form-section-label mt-2">
+                <VIcon icon="bx-lock-alt" size="16" />
+                Sécurité
+              </div>
+              <VTextField
+                v-model="formData.motDePasse"
+                label="Mot de passe"
+                placeholder="Minimum 6 caractères"
+                type="password"
+                variant="outlined"
+                density="comfortable"
+                :error-messages="formErrors.motDePasse"
+                :loading="isSubmitting"
+              />
+            </template>
 
-            <VSelect
-              v-model="formData.idRole"
-              label="Rôle"
-              :items="roleOptions"
-              item-title="title"
-              item-value="value"
-              placeholder="Sélectionner un rôle"
-              :error-messages="formErrors.idRole"
-              :loading="loading"
-              class="mt-4"
-            />
+            <VDivider class="mt-4 mb-4" />
 
-            <VSelect
-              v-model="formData.statutUtilisateur"
-              label="Statut"
-              :items="statusOptions"
-              item-title="title"
-              item-value="value"
-              placeholder="Sélectionner un statut"
-              class="mt-4"
-            />
-
-            <VTextField
-              v-if="!isEditing"
-              v-model="formData.motDePasse"
-              label="Mot de passe"
-              placeholder="Minimum 6 caractères"
-              type="password"
-              :error-messages="formErrors.motDePasse"
-              :loading="isSubmitting"
-              class="mt-4"
-            />
-
-            <div class="d-flex justify-end gap-2 mt-4">
+            <div class="d-flex justify-end gap-2">
               <VBtn
                 variant="tonal"
                 color="secondary"
-                @click="showDialog = false"
                 :disabled="isSubmitting"
+                @click="showDialog = false"
               >
                 Annuler
               </VBtn>
@@ -750,7 +901,7 @@ onUnmounted(() => {
                 :loading="isSubmitting"
                 :disabled="isSubmitting"
               >
-                {{ isEditing ? 'Modifier' : 'Ajouter' }}
+                {{ isEditing ? 'Enregistrer les modifications' : 'Ajouter l\'utilisateur' }}
               </VBtn>
             </div>
           </VForm>
@@ -761,37 +912,45 @@ onUnmounted(() => {
     <!-- Dialogue de confirmation -->
     <VDialog
       v-model="showConfirmDialog"
-      max-width="420"
+      max-width="440"
       persistent
     >
       <VCard>
-        <VCardItem>
-          <VCardTitle :class="confirmAction === 'delete' ? 'text-error' : 'text-warning'">
-            {{ confirmAction === 'delete' ? 'Confirmer la suppression' : 'Confirmer la désactivation' }}
-          </VCardTitle>
-          <VCardSubtitle>
-            {{ confirmAction === 'delete' ? 'Êtes-vous sûr de vouloir supprimer cet utilisateur ?' : 'Êtes-vous sûr de vouloir désactiver cet utilisateur ?' }}
-          </VCardSubtitle>
-        </VCardItem>
+        <VCardText class="text-center pt-8">
+          <VAvatar
+            size="56"
+            :color="confirmAction === 'delete' ? 'error' : 'warning'"
+            variant="tonal"
+            class="mb-4"
+          >
+            <VIcon
+              :icon="confirmAction === 'delete' ? 'bx-trash' : 'bx-pause-circle'"
+              size="28"
+            />
+          </VAvatar>
 
-        <VCardText>
-          <p class="text-medium-emphasis">
+          <h6 class="text-h6 mb-1">
+            {{ confirmAction === 'delete' ? 'Confirmer la suppression' : 'Confirmer la désactivation' }}
+          </h6>
+
+          <p class="text-medium-emphasis mb-1">
             Vous êtes sur le point de {{ confirmAction === 'delete' ? 'supprimer' : 'désactiver' }} l'utilisateur
             <strong class="text-high-emphasis">
-              "{{ userToConfirm?.prenomUtilisateur }} {{ userToConfirm?.nomUtilisateur }}"
+              {{ userToConfirm?.prenomUtilisateur }} {{ userToConfirm?.nomUtilisateur }}
             </strong>.
           </p>
-          <p v-if="confirmAction === 'delete'" class="text-error text-caption">
-            <VIcon icon="bx-error-circle" size="16" class="me-1" />
+
+          <p v-if="confirmAction === 'delete'" class="text-error text-caption d-flex align-center justify-center gap-1">
+            <VIcon icon="bx-error-circle" size="16" />
             Cette action est irréversible.
           </p>
-          <p v-else class="text-warning text-caption">
-            <VIcon icon="bx-error-circle" size="16" class="me-1" />
+          <p v-else class="text-warning text-caption d-flex align-center justify-center gap-1">
+            <VIcon icon="bx-error-circle" size="16" />
             L'utilisateur ne pourra plus se connecter.
           </p>
         </VCardText>
 
-        <VCardActions class="d-flex justify-end gap-2 pa-4">
+        <VCardActions class="d-flex justify-center gap-2 pa-4 pt-2">
           <VBtn
             variant="tonal"
             color="secondary"
@@ -823,7 +982,7 @@ onUnmounted(() => {
         class="me-2"
       />
       {{ snackbar.message }}
-      
+
       <template #actions>
         <VBtn
           variant="text"
@@ -836,7 +995,77 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.gap-2 {
-  gap: 8px;
+.gap-1 { gap: 4px; }
+.gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
+.gap-4 { gap: 16px; }
+
+.users-header-card {
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+.stat-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 68px;
+  padding: 6px 14px;
+  border-radius: 10px;
+  background: rgba(var(--v-theme-primary), 0.08);
+}
+
+.stat-pill__value {
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: rgb(var(--v-theme-primary));
+}
+
+.stat-pill--success {
+  background: rgba(var(--v-theme-success), 0.08);
+}
+.stat-pill--success .stat-pill__value {
+  color: rgb(var(--v-theme-success));
+}
+
+.stat-pill--error {
+  background: rgba(var(--v-theme-error), 0.08);
+}
+.stat-pill--error .stat-pill__value {
+  color: rgb(var(--v-theme-error));
+}
+
+.stat-pill__label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(var(--v-theme-on-surface), 0.6);
+}
+
+.users-table :deep(th) {
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  color: rgba(var(--v-theme-on-surface), 0.6);
+}
+
+.users-table__row:hover {
+  background: rgba(var(--v-theme-on-surface), 0.03);
+}
+
+.dialog-header {
+  padding-bottom: 12px;
+}
+
+.form-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(var(--v-theme-on-surface), 0.55);
+  margin-bottom: 12px;
 }
 </style>
