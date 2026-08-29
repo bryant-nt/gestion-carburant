@@ -145,23 +145,34 @@ const carburantOptions = computed(() =>
   }))
 )
 
-// Filtering & Pagination
+// Filtering & Pagination (MODIFICATION ICI)
 const filteredEquipements = computed(() => {
   let result = equipements.value
+
   if (searchQuery.value) {
     const query = searchQuery.value.toLowerCase()
-    result = result.filter(e =>
-      e.immatriculationEquipement?.toLowerCase().includes(query) ||
-      e.marqueEquipement?.toLowerCase().includes(query) ||
-      e.modeleEquipement?.toLowerCase().includes(query)
-    )
+    result = result.filter(e => {
+      // Champs de base
+      const matchImmat = e.immatriculationEquipement?.toLowerCase().includes(query) || false
+      const matchMarque = e.marqueEquipement?.toLowerCase().includes(query) || false
+      const matchModele = e.modeleEquipement?.toLowerCase().includes(query) || false
+      // Champs liés (relations)
+      const matchType = e.typeEquipement?.libelleTypeEquipement?.toLowerCase().includes(query) || false
+      const matchStatut = e.statut?.libelleStatut?.toLowerCase().includes(query) || false
+      const matchCarburant = e.carburant?.libelleCarburant?.toLowerCase().includes(query) || false
+
+      return matchImmat || matchMarque || matchModele || matchType || matchStatut || matchCarburant
+    })
   }
+
   if (filterType.value) {
     result = result.filter(e => e.idTypeEquipement === filterType.value)
   }
+
   if (filterStatut.value) {
     result = result.filter(e => e.idStatut === filterStatut.value)
   }
+
   return result
 })
 
