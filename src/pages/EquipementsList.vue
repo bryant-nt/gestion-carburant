@@ -53,6 +53,43 @@ const filterStatut = ref(null)
 const currentPage = ref(1)
 const itemsPerPage = ref(10)
 
+// --- Tri ---
+const sortColumn = ref('immatriculationEquipement') // colonne par défaut
+const sortDirection = ref('asc') // 'asc' ou 'desc'
+
+// Fonction pour obtenir la valeur à trier en fonction de la colonne
+const getSortValue = (equipement, column) => {
+  switch (column) {
+    case 'immatriculationEquipement':
+      return equipement.immatriculationEquipement || ''
+    case 'marqueEquipement':
+      return equipement.marqueEquipement || ''
+    case 'modeleEquipement':
+      return equipement.modeleEquipement || ''
+    case 'typeEquipement':
+      return equipement.typeEquipement?.libelleTypeEquipement || ''
+    case 'carburant':
+      return equipement.carburant?.libelleCarburant || ''
+    case 'statut':
+      return equipement.statut?.libelleStatut || ''
+    default:
+      return ''
+  }
+}
+
+const toggleSort = (column) => {
+  if (sortColumn.value === column) {
+    // Si on clique sur la même colonne, on inverse la direction
+    sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    // Nouvelle colonne : on initialise en ascendant
+    sortColumn.value = column
+    sortDirection.value = 'asc'
+  }
+  // On remet à la page 1 après changement de tri
+  currentPage.value = 1
+}
+
 // --- Gestion des photos protégées ---
 const photoUrlCache = reactive(new Map())
 const brokenPhotos = ref(new Set())
@@ -145,32 +182,43 @@ const carburantOptions = computed(() =>
   }))
 )
 
-// Filtering & Pagination (MODIFICATION ICI)
+// Filtering & Pagination + Tri
 const filteredEquipements = computed(() => {
   let result = equipements.value
 
+  // Filtre textuel
   if (searchQuery.value) {
     const query = searchQuery.value.toLowerCase()
     result = result.filter(e => {
-      // Champs de base
       const matchImmat = e.immatriculationEquipement?.toLowerCase().includes(query) || false
       const matchMarque = e.marqueEquipement?.toLowerCase().includes(query) || false
       const matchModele = e.modeleEquipement?.toLowerCase().includes(query) || false
-      // Champs liés (relations)
       const matchType = e.typeEquipement?.libelleTypeEquipement?.toLowerCase().includes(query) || false
       const matchStatut = e.statut?.libelleStatut?.toLowerCase().includes(query) || false
       const matchCarburant = e.carburant?.libelleCarburant?.toLowerCase().includes(query) || false
-
       return matchImmat || matchMarque || matchModele || matchType || matchStatut || matchCarburant
     })
   }
 
+  // Filtres par type et statut
   if (filterType.value) {
     result = result.filter(e => e.idTypeEquipement === filterType.value)
   }
-
   if (filterStatut.value) {
     result = result.filter(e => e.idStatut === filterStatut.value)
+  }
+
+  // Tri
+  if (sortColumn.value) {
+    const column = sortColumn.value
+    const direction = sortDirection.value
+    result = result.slice().sort((a, b) => {
+      const valA = getSortValue(a, column)
+      const valB = getSortValue(b, column)
+      // Comparaison insensible à la casse pour les chaînes
+      const compare = valA.localeCompare(valB, undefined, { sensitivity: 'base' })
+      return direction === 'asc' ? compare : -compare
+    })
   }
 
   return result
@@ -206,7 +254,7 @@ const showNotification = (message, color = 'success') => {
   snackbar.value = { show: true, message, color, timeout: 3000 }
 }
 
-// Export Excel
+// Export Excel (inchangé)
 const exportToExcel = async () => {
   if (isExporting.value) return
   isExporting.value = true
@@ -730,14 +778,72 @@ onUnmounted(() => {
         <VTable class="custom-table">
           <thead>
             <tr>
+              <!-- Colonne N° (pas de tri) -->
               <th class="text-uppercase text-center text-caption font-weight-bold" style="width: 60px;">N°</th>
+              <!-- Photo (pas de tri) -->
               <th class="text-uppercase text-caption font-weight-bold" style="width: 80px;">Photo</th>
-              <th class="text-uppercase text-caption font-weight-bold">Immatriculation</th>
-              <th class="text-uppercase text-caption font-weight-bold">Marque</th>
-              <th class="text-uppercase text-caption font-weight-bold">Modèle</th>
-              <th class="text-uppercase text-caption font-weight-bold">Type</th>
-              <th class="text-uppercase text-caption font-weight-bold">Carburant</th>
-              <th class="text-uppercase text-caption font-weight-bold text-center">Statut</th>
+              <!-- Colonnes triables -->
+              <th
+                class="text-uppercase text-caption font-weight-bold sortable"
+                @click="toggleSort('immatriculationEquipement')"
+                style="cursor: pointer;"
+              >
+                Immatriculation
+                <VIcon v-if="sortColumn === 'immatriculationEquipement'" size="16" class="ms-1">
+                  {{ sortDirection === 'asc' ? 'bx-chevron-up' : 'bx-chevron-down' }}
+                </VIcon>
+              </th>
+              <th
+                class="text-uppercase text-caption font-weight-bold sortable"
+                @click="toggleSort('marqueEquipement')"
+                style="cursor: pointer;"
+              >
+                Marque
+                <VIcon v-if="sortColumn === 'marqueEquipement'" size="16" class="ms-1">
+                  {{ sortDirection === 'asc' ? 'bx-chevron-up' : 'bx-chevron-down' }}
+                </VIcon>
+              </th>
+              <th
+                class="text-uppercase text-caption font-weight-bold sortable"
+                @click="toggleSort('modeleEquipement')"
+                style="cursor: pointer;"
+              >
+                Modèle
+                <VIcon v-if="sortColumn === 'modeleEquipement'" size="16" class="ms-1">
+                  {{ sortDirection === 'asc' ? 'bx-chevron-up' : 'bx-chevron-down' }}
+                </VIcon>
+              </th>
+              <th
+                class="text-uppercase text-caption font-weight-bold sortable"
+                @click="toggleSort('typeEquipement')"
+                style="cursor: pointer;"
+              >
+                Type
+                <VIcon v-if="sortColumn === 'typeEquipement'" size="16" class="ms-1">
+                  {{ sortDirection === 'asc' ? 'bx-chevron-up' : 'bx-chevron-down' }}
+                </VIcon>
+              </th>
+              <th
+                class="text-uppercase text-caption font-weight-bold sortable"
+                @click="toggleSort('carburant')"
+                style="cursor: pointer;"
+              >
+                Carburant
+                <VIcon v-if="sortColumn === 'carburant'" size="16" class="ms-1">
+                  {{ sortDirection === 'asc' ? 'bx-chevron-up' : 'bx-chevron-down' }}
+                </VIcon>
+              </th>
+              <th
+                class="text-uppercase text-caption font-weight-bold text-center sortable"
+                @click="toggleSort('statut')"
+                style="cursor: pointer;"
+              >
+                Statut
+                <VIcon v-if="sortColumn === 'statut'" size="16" class="ms-1">
+                  {{ sortDirection === 'asc' ? 'bx-chevron-up' : 'bx-chevron-down' }}
+                </VIcon>
+              </th>
+              <!-- Actions (pas de tri) -->
               <th class="text-uppercase text-caption font-weight-bold text-center" style="width: 140px;">Actions</th>
             </tr>
           </thead>
@@ -1195,6 +1301,15 @@ onUnmounted(() => {
   color: rgba(0, 0, 0, 0.6);
   border-bottom: 2px solid rgba(0, 0, 0, 0.06);
   white-space: nowrap;
+}
+
+/* En-têtes triables */
+.sortable {
+  user-select: none;
+  transition: background-color 0.15s ease;
+}
+.sortable:hover {
+  background-color: rgba(var(--v-theme-primary), 0.06);
 }
 
 .custom-table tbody td {
